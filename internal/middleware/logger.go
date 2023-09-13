@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
-	"github.com/go-chi/chi/middleware"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 // Logger is a middleware that logs useful data about each HTTP request.
@@ -39,13 +39,13 @@ type LogEntry struct {
 }
 
 // Write constructs and writes the final log entry.
-func (l *LogEntry) Write(status, totalBytes int, elapsed time.Duration) {
+func (l *LogEntry) Write(status, totalBytes int, _ http.Header, elapsed time.Duration, _ any) {
 	rid := GetReqID(l.req.Context())
 	if rid != "" {
-		fmt.Fprintf(l.buf, "[%s] ", rid)
+		_, _ = fmt.Fprintf(l.buf, "[%s] ", rid)
 	}
 
-	fmt.Fprintf(l.buf, "%03d | %s | %s | ", status, humanize.IBytes(uint64(totalBytes)), elapsed)
+	_, _ = fmt.Fprintf(l.buf, "%03d | %s | %s | ", status, humanize.IBytes(uint64(totalBytes)), elapsed)
 	l.buf.WriteString(l.req.Host + " | " + l.req.Method + " " + l.req.RequestURI)
 	log.Print(l.buf.String())
 }
@@ -53,7 +53,7 @@ func (l *LogEntry) Write(status, totalBytes int, elapsed time.Duration) {
 // Panic prints the call stack for a panic.
 func (l *LogEntry) Panic(v interface{}, stack []byte) {
 	e := l.NewLogEntry(l.req).(*LogEntry)
-	fmt.Fprintf(e.buf, "panic: %#v", v)
+	_, _ = fmt.Fprintf(e.buf, "panic: %#v", v)
 	log.Print(e.buf.String())
 	log.Print(string(stack))
 }

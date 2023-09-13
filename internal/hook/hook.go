@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"io/ioutil"
 	"log"
 	"math"
 	"net"
@@ -587,12 +586,12 @@ type Hook struct {
 // ParseJSONParameters decodes specified arguments to JSON objects and replaces the
 // string with the newly created object
 func (h *Hook) ParseJSONParameters(r *Request) []error {
-	errors := make([]error, 0)
+	errList := make([]error, 0)
 
 	for i := range h.JSONStringParameters {
 		arg, err := h.JSONStringParameters[i].Get(r)
 		if err != nil {
-			errors = append(errors, &ArgumentError{h.JSONStringParameters[i]})
+			errList = append(errList, &ArgumentError{h.JSONStringParameters[i]})
 		} else {
 			var newArg map[string]interface{}
 
@@ -601,7 +600,7 @@ func (h *Hook) ParseJSONParameters(r *Request) []error {
 
 			err := decoder.Decode(&newArg)
 			if err != nil {
-				errors = append(errors, &ParseError{err})
+				errList = append(errList, &ParseError{err})
 				continue
 			}
 
@@ -625,13 +624,13 @@ func (h *Hook) ParseJSONParameters(r *Request) []error {
 
 				ReplaceParameter(key, source, newArg)
 			} else {
-				errors = append(errors, &SourceError{h.JSONStringParameters[i]})
+				errList = append(errList, &SourceError{h.JSONStringParameters[i]})
 			}
 		}
 	}
 
-	if len(errors) > 0 {
-		return errors
+	if len(errList) > 0 {
+		return errList
 	}
 
 	return nil
@@ -641,7 +640,7 @@ func (h *Hook) ParseJSONParameters(r *Request) []error {
 // PassArgumentsToCommand property that is ready to be used with exec.Command()
 func (h *Hook) ExtractCommandArguments(r *Request) ([]string, []error) {
 	args := make([]string, 0)
-	errors := make([]error, 0)
+	errList := make([]error, 0)
 
 	args = append(args, h.ExecuteCommand)
 
@@ -649,15 +648,15 @@ func (h *Hook) ExtractCommandArguments(r *Request) ([]string, []error) {
 		arg, err := h.PassArgumentsToCommand[i].Get(r)
 		if err != nil {
 			args = append(args, "")
-			errors = append(errors, &ArgumentError{h.PassArgumentsToCommand[i]})
+			errList = append(errList, &ArgumentError{h.PassArgumentsToCommand[i]})
 			continue
 		}
 
 		args = append(args, arg)
 	}
 
-	if len(errors) > 0 {
-		return args, errors
+	if len(errList) > 0 {
+		return args, errList
 	}
 
 	return args, nil
@@ -668,11 +667,11 @@ func (h *Hook) ExtractCommandArguments(r *Request) ([]string, []error) {
 // with exec.Command().
 func (h *Hook) ExtractCommandArgumentsForEnv(r *Request) ([]string, []error) {
 	args := make([]string, 0)
-	errors := make([]error, 0)
+	errList := make([]error, 0)
 	for i := range h.PassEnvironmentToCommand {
 		arg, err := h.PassEnvironmentToCommand[i].Get(r)
 		if err != nil {
-			errors = append(errors, &ArgumentError{h.PassEnvironmentToCommand[i]})
+			errList = append(errList, &ArgumentError{h.PassEnvironmentToCommand[i]})
 			continue
 		}
 
@@ -685,8 +684,8 @@ func (h *Hook) ExtractCommandArgumentsForEnv(r *Request) ([]string, []error) {
 		}
 	}
 
-	if len(errors) > 0 {
-		return args, errors
+	if len(errList) > 0 {
+		return args, errList
 	}
 
 	return args, nil
@@ -704,11 +703,11 @@ type FileParameter struct {
 // with exec.Command().
 func (h *Hook) ExtractCommandArgumentsForFile(r *Request) ([]FileParameter, []error) {
 	args := make([]FileParameter, 0)
-	errors := make([]error, 0)
+	errList := make([]error, 0)
 	for i := range h.PassFileToCommand {
 		arg, err := h.PassFileToCommand[i].Get(r)
 		if err != nil {
-			errors = append(errors, &ArgumentError{h.PassFileToCommand[i]})
+			errList = append(errList, &ArgumentError{h.PassFileToCommand[i]})
 			continue
 		}
 
@@ -732,8 +731,8 @@ func (h *Hook) ExtractCommandArgumentsForFile(r *Request) ([]FileParameter, []er
 		args = append(args, FileParameter{EnvName: h.PassFileToCommand[i].EnvName, Data: fileContent})
 	}
 
-	if len(errors) > 0 {
-		return args, errors
+	if len(errList) > 0 {
+		return args, errList
 	}
 
 	return args, nil
@@ -751,10 +750,9 @@ func (h *Hooks) LoadFromFile(path string, asTemplate bool) error {
 	}
 
 	// parse hook file for hooks
-	file, e := ioutil.ReadFile(path)
-
+	file, e := os.ReadFile(path)
 	if e != nil {
-		return e
+		return fmt.Errorf("error reading hooks file: [%s]: %w", path, e)
 	}
 
 	if asTemplate {
@@ -762,14 +760,13 @@ func (h *Hooks) LoadFromFile(path string, asTemplate bool) error {
 
 		tmpl, err := template.New("hooks").Funcs(funcMap).Parse(string(file))
 		if err != nil {
-			return err
+			return fmt.Errorf("error parsing hooks file: [%s]: %w", path, err)
 		}
 
 		var buf bytes.Buffer
-
 		err = tmpl.Execute(&buf, nil)
 		if err != nil {
-			return err
+			return fmt.Errorf("executing template on file [%s]: %w", path, err)
 		}
 
 		file = buf.Bytes()
