@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -80,8 +79,8 @@ func (fw *flushWriter) Write(p []byte) (n int, err error) {
 
 func matchLoadedHook(id string) *hook.Hook {
 	for _, hooks := range loadedHooksFromFiles {
-		if hook := hooks.Match(id); hook != nil {
-			return hook
+		if h := hooks.Match(id); h != nil {
+			return h
 		}
 	}
 
@@ -174,7 +173,7 @@ func main() {
 	}
 
 	if !*verbose {
-		log.SetOutput(ioutil.Discard)
+		log.SetOutput(io.Discard)
 	}
 
 	// Create pidfile
@@ -213,11 +212,11 @@ func main() {
 		} else {
 			log.Printf("found %d hook(s) in file\n", len(newHooks))
 
-			for _, hook := range newHooks {
-				if matchLoadedHook(hook.ID) != nil {
-					log.Fatalf("error: hook with the id %s has already been loaded!\nplease check your hooks file for duplicate hooks ids!\n", hook.ID)
+			for _, h := range newHooks {
+				if matchLoadedHook(h.ID) != nil {
+					log.Fatalf("error: hook with the id %s has already been loaded!\nplease check your hooks file for duplicate hooks ids!\n", h.ID)
 				}
-				log.Printf("\tloaded: %s\n", hook.ID)
+				log.Printf("\tloaded: %s\n", h.ID)
 			}
 
 			loadedHooksFromFiles[hooksFilePath] = newHooks
@@ -235,7 +234,11 @@ func main() {
 
 	if !*verbose && !*noPanic && lenLoadedHooks() == 0 {
 		log.SetOutput(os.Stdout)
-		log.Fatalln("couldn't load any hooks from file!\naborting webhook execution since the -verbose flag is set to false.\nIf, for some reason, you want webhook to start without the hooks, either use -verbose flag, or -nopanic")
+		log.Fatalln(
+			"couldn't load any hooks from file!\n" +
+				"aborting webhook execution since the -verbose flag is set to false.\n" +
+				"If, for some reason, you want webhook to start without the hooks, either use -verbose flag, or -nopanic",
+		)
 	}
 
 	if *hotReload {
@@ -245,7 +248,7 @@ func main() {
 		if err != nil {
 			log.Fatal("error creating file watcher instance\n", err)
 		}
-		defer watcher.Close()
+		defer func() { _ = watcher.Close() }()
 
 		for _, hooksFilePath := range hooksFiles {
 			// set up file watcher
@@ -284,7 +287,7 @@ func main() {
 			w.Header().Set(responseHeader.Name, responseHeader.Value)
 		}
 
-		fmt.Fprint(w, "OK")
+		_, _ = fmt.Fprint(w, "OK")
 	})
 
 	r.HandleFunc(hooksURL, hookHandler)
@@ -305,10 +308,9 @@ func main() {
 
 	// Server HTTPS
 	svr.TLSConfig = &tls.Config{
-		CipherSuites:             getTLSCipherSuites(*tlsCipherSuites),
-		CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
-		MinVersion:               getTLSMinVersion(*tlsMinVersion),
-		PreferServerCipherSuites: true,
+		CipherSuites:     getTLSCipherSuites(*tlsCipherSuites),
+		CurvePreferences: []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
+		MinVersion:       getTLSMinVersion(*tlsMinVersion),
 	}
 	svr.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler)) // disable http/2
 
@@ -330,7 +332,7 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 	matchedHook := matchLoadedHook(id)
 	if matchedHook == nil {
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, "Hook not found.")
+		_, _ = fmt.Fprint(w, "Hook not found.")
 		return
 	}
 
@@ -382,7 +384,7 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 	isMultipart := strings.HasPrefix(req.ContentType, "multipart/form-data;")
 
 	if !isMultipart {
-		req.Body, err = ioutil.ReadAll(r.Body)
+		req.Body, err = io.ReadAll(r.Body)
 		if err != nil {
 			log.Printf("[%s] error reading the request body: %+v\n", req.ID, err)
 		}
@@ -416,7 +418,7 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 			msg := fmt.Sprintf("[%s] error parsing multipart form: %+v\n", req.ID, err)
 			log.Println(msg)
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, "Error occurred while parsing multipart form.")
+			_, _ = fmt.Fprint(w, "Error occurred while parsing multipart form.")
 			return
 		}
 
@@ -464,7 +466,7 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 					msg := fmt.Sprintf("[%s] error parsing multipart form file: %+v\n", req.ID, err)
 					log.Println(msg)
 					w.WriteHeader(http.StatusInternalServerError)
-					fmt.Fprint(w, "Error occurred while parsing multipart form file.")
+					_, _ = fmt.Fprint(w, "Error occurred while parsing multipart form file.")
 					return
 				}
 
@@ -505,10 +507,9 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 		ok, err = matchedHook.TriggerRule.Evaluate(req)
 		if err != nil {
 			if !hook.IsParameterNodeError(err) {
-				msg := fmt.Sprintf("[%s] error evaluating hook: %s", req.ID, err)
-				log.Println(msg)
+				log.Println(fmt.Sprintf("[%s] error evaluating hook: %s", req.ID, err))
 				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprint(w, "Error occurred while evaluating hook rules.")
+				_, _ = fmt.Fprint(w, "Error occurred while evaluating hook rules.")
 				return
 			}
 
@@ -531,17 +532,17 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				if matchedHook.CaptureCommandOutputOnError {
-					fmt.Fprint(w, response)
+					_, _ = fmt.Fprint(w, response)
 				} else {
 					w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-					fmt.Fprint(w, "Error occurred while executing the hook's command. Please check your logs for more details.")
+					_, _ = fmt.Fprint(w, "Error occurred while executing the hook's command. Please check your logs for more details.")
 				}
 			} else {
 				// Check if a success return code is configured for the hook
 				if matchedHook.SuccessHttpResponseCode != 0 {
 					writeHttpResponseCode(w, req.ID, matchedHook.ID, matchedHook.SuccessHttpResponseCode)
 				}
-				fmt.Fprint(w, response)
+				_, _ = fmt.Fprint(w, response)
 			}
 		} else {
 			go handleHook(matchedHook, req, nil)
@@ -551,7 +552,7 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 				writeHttpResponseCode(w, req.ID, matchedHook.ID, matchedHook.SuccessHttpResponseCode)
 			}
 
-			fmt.Fprint(w, matchedHook.ResponseMessage)
+			_, _ = fmt.Fprint(w, matchedHook.ResponseMessage)
 		}
 		return
 	}
@@ -564,7 +565,7 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 	// if none of the hooks got triggered
 	log.Printf("[%s] %s got matched, but didn't get triggered because the trigger rules were not satisfied\n", req.ID, matchedHook.ID)
 
-	fmt.Fprint(w, "Hook rules were not satisfied.")
+	_, _ = fmt.Fprint(w, "Hook rules were not satisfied.")
 }
 
 func handleHook(h *hook.Hook, r *hook.Request, w http.ResponseWriter) (string, error) {
@@ -613,7 +614,7 @@ func handleHook(h *hook.Hook, r *hook.Request, w http.ResponseWriter) (string, e
 	}
 
 	for i := range files {
-		tmpfile, err := ioutil.TempFile(h.CommandWorkingDirectory, files[i].EnvName)
+		tmpfile, err := os.CreateTemp(h.CommandWorkingDirectory, files[i].EnvName)
 		if err != nil {
 			log.Printf("[%s] error creating temp file [%s]", r.ID, err)
 			continue
@@ -702,24 +703,24 @@ func reloadHooks(hooksFilePath string) {
 
 		log.Printf("found %d hook(s) in file\n", len(hooksInFile))
 
-		for _, hook := range hooksInFile {
+		for _, h := range hooksInFile {
 			wasHookIDAlreadyLoaded := false
 
 			for _, loadedHook := range loadedHooksFromFiles[hooksFilePath] {
-				if loadedHook.ID == hook.ID {
+				if loadedHook.ID == h.ID {
 					wasHookIDAlreadyLoaded = true
 					break
 				}
 			}
 
-			if (matchLoadedHook(hook.ID) != nil && !wasHookIDAlreadyLoaded) || seenHooksIds[hook.ID] {
-				log.Printf("error: hook with the id %s has already been loaded!\nplease check your hooks file for duplicate hooks ids!", hook.ID)
+			if (matchLoadedHook(h.ID) != nil && !wasHookIDAlreadyLoaded) || seenHooksIds[h.ID] {
+				log.Printf("error: hook with the id %s has already been loaded!\nplease check your hooks file for duplicate hooks ids!", h.ID)
 				log.Println("reverting hooks back to the previous configuration")
 				return
 			}
 
-			seenHooksIds[hook.ID] = true
-			log.Printf("\tloaded: %s\n", hook.ID)
+			seenHooksIds[h.ID] = true
+			log.Printf("\tloaded: %s\n", h.ID)
 		}
 
 		loadedHooksFromFiles[hooksFilePath] = hooksInFile
@@ -733,8 +734,8 @@ func reloadAllHooks() {
 }
 
 func removeHooks(hooksFilePath string) {
-	for _, hook := range loadedHooksFromFiles[hooksFilePath] {
-		log.Printf("\tremoving: %s\n", hook.ID)
+	for _, h := range loadedHooksFromFiles[hooksFilePath] {
+		log.Printf("\tremoving: %s\n", h.ID)
 	}
 
 	newHooksFiles := hooksFiles[:0]
@@ -768,7 +769,7 @@ func watchForFileChange() {
 			} else if event.Op&fsnotify.Remove == fsnotify.Remove {
 				if _, err := os.Stat(event.Name); os.IsNotExist(err) {
 					log.Printf("hooks file %s removed, no longer watching this file for changes, removing hooks that were loaded from it\n", event.Name)
-					(*watcher).Remove(event.Name)
+					_ = (*watcher).Remove(event.Name)
 					removeHooks(event.Name)
 				}
 			} else if event.Op&fsnotify.Rename == fsnotify.Rename {
@@ -776,14 +777,14 @@ func watchForFileChange() {
 				if _, err := os.Stat(event.Name); os.IsNotExist(err) {
 					// file was removed
 					log.Printf("hooks file %s removed, no longer watching this file for changes, and removing hooks that were loaded from it\n", event.Name)
-					(*watcher).Remove(event.Name)
+					_ = (*watcher).Remove(event.Name)
 					removeHooks(event.Name)
 				} else {
 					// file was overwritten
 					log.Printf("hooks file %s overwritten\n", event.Name)
 					reloadHooks(event.Name)
-					(*watcher).Remove(event.Name)
-					(*watcher).Add(event.Name)
+					_ = (*watcher).Remove(event.Name)
+					_ = (*watcher).Add(event.Name)
 				}
 			}
 		case err := <-(*watcher).Errors:

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -35,11 +34,10 @@ func TestStaticParams(t *testing.T) {
 
 	// case 2: binary with spaces in its name
 	d1 := []byte("#!/bin/sh\n/bin/echo\n")
-	err := ioutil.WriteFile("/tmp/with space", d1, 0755)
-	if err != nil {
+	if err := os.WriteFile("/tmp/with space", d1, 0755); err != nil {
 		t.Fatalf("%v", err)
 	}
-	defer os.Remove("/tmp/with space")
+	defer func() { _ = os.Remove("/tmp/with space") }()
 
 	spHook := &hook.Hook{
 		ID:                      "static-params-name-space",
@@ -48,7 +46,7 @@ func TestStaticParams(t *testing.T) {
 		ResponseMessage:         "success",
 		CaptureCommandOutput:    true,
 		PassArgumentsToCommand: []hook.Argument{
-			hook.Argument{Source: "string", Name: "passed"},
+			{Source: "string", Name: "passed"},
 		},
 	}
 
@@ -59,8 +57,7 @@ func TestStaticParams(t *testing.T) {
 		ID:      "test",
 		Headers: spHeaders,
 	}
-	_, err = handleHook(spHook, r, nil)
-	if err != nil {
+	if _, err := handleHook(spHook, r, nil); err != nil {
 		t.Fatalf("Unexpected error: %v\n", err)
 	}
 	matched, _ := regexp.MatchString("(?s)command output: .*static-params-name-space", b.String())
@@ -105,7 +102,7 @@ func TestWebhook(t *testing.T) {
 
 				url := fmt.Sprintf("http://%s:%s/hooks/%s", ip, port, tt.id)
 
-				req, err := http.NewRequest(tt.method, url, ioutil.NopCloser(strings.NewReader(tt.body)))
+				req, err := http.NewRequest(tt.method, url, io.NopCloser(strings.NewReader(tt.body)))
 				if err != nil {
 					t.Errorf("New request failed: %s", err)
 				}
@@ -126,7 +123,7 @@ func TestWebhook(t *testing.T) {
 				}
 
 				body, err := io.ReadAll(res.Body)
-				res.Body.Close()
+				_ = res.Body.Close()
 				if err != nil {
 					t.Errorf("POST %q: failed to ready body: %s", tt.desc, err)
 				}
@@ -223,11 +220,11 @@ func genConfig(t *testing.T, bin, hookTemplate string) (configPath string, clean
 		t.Fatalf("Executing template: %v", err)
 	}
 
-	return path, func() { os.RemoveAll(tmp) }
+	return path, func() { _ = os.RemoveAll(tmp) }
 }
 
 func buildWebhook(t *testing.T) (binPath string, cleanupFn func()) {
-	tmp, err := ioutil.TempDir("", "webhook-test-")
+	tmp, err := os.MkdirTemp("", "webhook-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +255,7 @@ func serverAddress(t *testing.T) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	host, port, err := net.SplitHostPort(ln.Addr().String())
 	if err != nil {
 		t.Fatalf("Failed to split network address: %v", err)

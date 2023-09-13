@@ -42,10 +42,10 @@ type LogEntry struct {
 func (l *LogEntry) Write(status, totalBytes int, _ http.Header, elapsed time.Duration, _ any) {
 	rid := GetReqID(l.req.Context())
 	if rid != "" {
-		fmt.Fprintf(l.buf, "[%s] ", rid)
+		_, _ = fmt.Fprintf(l.buf, "[%s] ", rid)
 	}
 
-	fmt.Fprintf(l.buf, "%03d | %s | %s | ", status, humanize.IBytes(uint64(totalBytes)), elapsed)
+	_, _ = fmt.Fprintf(l.buf, "%03d | %s | %s | ", status, humanize.IBytes(uint64(totalBytes)), elapsed)
 	l.buf.WriteString(l.req.Host + " | " + l.req.Method + " " + l.req.RequestURI)
 	log.Print(l.buf.String())
 }
@@ -53,7 +53,7 @@ func (l *LogEntry) Write(status, totalBytes int, _ http.Header, elapsed time.Dur
 // Panic prints the call stack for a panic.
 func (l *LogEntry) Panic(v interface{}, stack []byte) {
 	e := l.NewLogEntry(l.req).(*LogEntry)
-	fmt.Fprintf(e.buf, "panic: %#v", v)
+	_, _ = fmt.Fprintf(e.buf, "panic: %#v", v)
 	log.Print(e.buf.String())
 	log.Print(string(stack))
 }

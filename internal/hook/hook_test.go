@@ -294,14 +294,46 @@ var hookParseJSONParametersTests = []struct {
 	rheaders, rquery, rpayload map[string]interface{}
 	ok                         bool
 }{
-	{[]Argument{Argument{"header", "a", "", false}}, map[string]interface{}{"A": `{"b": "y"}`}, nil, nil, map[string]interface{}{"A": map[string]interface{}{"b": "y"}}, nil, nil, true},
-	{[]Argument{Argument{"url", "a", "", false}}, nil, map[string]interface{}{"a": `{"b": "y"}`}, nil, nil, map[string]interface{}{"a": map[string]interface{}{"b": "y"}}, nil, true},
-	{[]Argument{Argument{"payload", "a", "", false}}, nil, nil, map[string]interface{}{"a": `{"b": "y"}`}, nil, nil, map[string]interface{}{"a": map[string]interface{}{"b": "y"}}, true},
-	{[]Argument{Argument{"header", "z", "", false}}, map[string]interface{}{"Z": `{}`}, nil, nil, map[string]interface{}{"Z": map[string]interface{}{}}, nil, nil, true},
+	{
+		params:   []Argument{{"header", "a", "", false}},
+		headers:  map[string]interface{}{"A": `{"b": "y"}`},
+		rheaders: map[string]interface{}{"A": map[string]interface{}{"b": "y"}},
+		ok:       true,
+	},
+	{
+		params: []Argument{{"url", "a", "", false}},
+		query:  map[string]interface{}{"a": `{"b": "y"}`},
+		rquery: map[string]interface{}{"a": map[string]interface{}{"b": "y"}},
+		ok:     true,
+	},
+	{
+		params:   []Argument{{"payload", "a", "", false}},
+		payload:  map[string]interface{}{"a": `{"b": "y"}`},
+		rpayload: map[string]interface{}{"a": map[string]interface{}{"b": "y"}},
+		ok:       true,
+	},
+	{
+		params:   []Argument{{"header", "z", "", false}},
+		headers:  map[string]interface{}{"Z": `{}`},
+		rheaders: map[string]interface{}{"Z": map[string]interface{}{}},
+		ok:       true,
+	},
 	// failures
-	{[]Argument{Argument{"header", "z", "", false}}, map[string]interface{}{"Z": ``}, nil, nil, map[string]interface{}{"Z": ``}, nil, nil, false},     // empty string
-	{[]Argument{Argument{"header", "y", "", false}}, map[string]interface{}{"X": `{}`}, nil, nil, map[string]interface{}{"X": `{}`}, nil, nil, false}, // missing parameter
-	{[]Argument{Argument{"string", "z", "", false}}, map[string]interface{}{"Z": ``}, nil, nil, map[string]interface{}{"Z": ``}, nil, nil, false},     // invalid argument source
+	{
+		params:   []Argument{{"header", "z", "", false}},
+		headers:  map[string]interface{}{"Z": ``},
+		rheaders: map[string]interface{}{"Z": ``},
+	}, // empty string
+	{
+		params:   []Argument{{"header", "y", "", false}},
+		headers:  map[string]interface{}{"X": `{}`},
+		rheaders: map[string]interface{}{"X": `{}`},
+	}, // missing parameter
+	{
+		params:   []Argument{{"string", "z", "", false}},
+		headers:  map[string]interface{}{"Z": ``},
+		rheaders: map[string]interface{}{"Z": ``},
+	}, // invalid argument source
 }
 
 func TestHookParseJSONParameters(t *testing.T) {
@@ -326,9 +358,20 @@ var hookExtractCommandArgumentsTests = []struct {
 	value                   []string
 	ok                      bool
 }{
-	{"test", []Argument{Argument{"header", "a", "", false}}, map[string]interface{}{"A": "z"}, nil, nil, []string{"test", "z"}, true},
+	{
+		exec:    "test",
+		args:    []Argument{{"header", "a", "", false}},
+		headers: map[string]interface{}{"A": "z"},
+		value:   []string{"test", "z"},
+		ok:      true,
+	},
 	// failures
-	{"fail", []Argument{Argument{"payload", "a", "", false}}, map[string]interface{}{"A": "z"}, nil, nil, []string{"fail", ""}, false},
+	{
+		exec:    "fail",
+		args:    []Argument{{"payload", "a", "", false}},
+		headers: map[string]interface{}{"A": "z"},
+		value:   []string{"fail", ""},
+	},
 }
 
 func TestHookExtractCommandArguments(t *testing.T) {
@@ -375,26 +418,25 @@ var hookExtractCommandArgumentsForEnvTests = []struct {
 }{
 	// successes
 	{
-		"test",
-		[]Argument{Argument{"header", "a", "", false}},
-		map[string]interface{}{"A": "z"}, nil, nil,
-		[]string{"HOOK_a=z"},
-		true,
+		exec:    "test",
+		args:    []Argument{{"header", "a", "", false}},
+		headers: map[string]interface{}{"A": "z"},
+		value:   []string{"HOOK_a=z"},
+		ok:      true,
 	},
 	{
-		"test",
-		[]Argument{Argument{"header", "a", "MYKEY", false}},
-		map[string]interface{}{"A": "z"}, nil, nil,
-		[]string{"MYKEY=z"},
-		true,
+		exec:    "test",
+		args:    []Argument{{"header", "a", "MYKEY", false}},
+		headers: map[string]interface{}{"A": "z"},
+		value:   []string{"MYKEY=z"},
+		ok:      true,
 	},
 	// failures
 	{
-		"fail",
-		[]Argument{Argument{"payload", "a", "", false}},
-		map[string]interface{}{"A": "z"}, nil, nil,
-		[]string{},
-		false,
+		exec:    "fail",
+		args:    []Argument{{"payload", "a", "", false}},
+		headers: map[string]interface{}{"A": "z"},
+		value:   []string{},
 	},
 }
 
@@ -429,7 +471,7 @@ var hooksLoadFromFileTests = []struct {
 
 func TestHooksLoadFromFile(t *testing.T) {
 	secret := `foo"123`
-	os.Setenv("XXXTEST_SECRET", secret)
+	_ = os.Setenv("XXXTEST_SECRET", secret)
 
 	for _, tt := range hooksLoadFromFileTests {
 		t.Run(tt.path, func(t *testing.T) {
@@ -444,7 +486,7 @@ func TestHooksLoadFromFile(t *testing.T) {
 
 func TestHooksTemplateLoadFromFile(t *testing.T) {
 	secret := `foo"123`
-	os.Setenv("XXXTEST_SECRET", secret)
+	_ = os.Setenv("XXXTEST_SECRET", secret)
 
 	for _, tt := range hooksLoadFromFileTests {
 		if !tt.asTemplate {
