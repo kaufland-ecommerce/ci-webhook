@@ -351,20 +351,21 @@ func TestHookExtractCommandArguments(t *testing.T) {
 // we test both cases where the name of the data is used as the name of the
 // env key & the case where the hook definition sets the env var name to a
 // fixed value using the envname construct like so::
-//    [
-//      {
-//        "id": "push",
-//        "execute-command": "bb2mm",
-//        "command-working-directory": "/tmp",
-//        "pass-environment-to-command":
-//        [
-//          {
-//            "source": "entire-payload",
-//            "envname": "PAYLOAD"
-//          },
-//        ]
-//      }
-//    ]
+//
+//	[
+//	  {
+//	    "id": "push",
+//	    "execute-command": "bb2mm",
+//	    "command-working-directory": "/tmp",
+//	    "pass-environment-to-command":
+//	    [
+//	      {
+//	        "source": "entire-payload",
+//	        "envname": "PAYLOAD"
+//	      },
+//	    ]
+//	  }
+//	]
 var hookExtractCommandArgumentsForEnvTests = []struct {
 	exec                    string
 	args                    []Argument
@@ -431,11 +432,13 @@ func TestHooksLoadFromFile(t *testing.T) {
 	os.Setenv("XXXTEST_SECRET", secret)
 
 	for _, tt := range hooksLoadFromFileTests {
-		h := &Hooks{}
-		err := h.LoadFromFile(tt.path, tt.asTemplate)
-		if (err == nil) != tt.ok {
-			t.Errorf(err.Error())
-		}
+		t.Run(tt.path, func(t *testing.T) {
+			h := &Hooks{}
+			err := h.LoadFromFile(tt.path, tt.asTemplate)
+			if (err == nil) != tt.ok {
+				t.Errorf(err.Error())
+			}
+		})
 	}
 }
 
@@ -447,18 +450,19 @@ func TestHooksTemplateLoadFromFile(t *testing.T) {
 		if !tt.asTemplate {
 			continue
 		}
+		t.Run(tt.path, func(t *testing.T) {
+			h := &Hooks{}
+			err := h.LoadFromFile(tt.path, tt.asTemplate)
+			if (err == nil) != tt.ok {
+				t.Errorf(err.Error())
+				return
+			}
 
-		h := &Hooks{}
-		err := h.LoadFromFile(tt.path, tt.asTemplate)
-		if (err == nil) != tt.ok {
-			t.Errorf(err.Error())
-			continue
-		}
-
-		s := (*h.Match("webhook").TriggerRule.And)[0].Match.Secret
-		if s != secret {
-			t.Errorf("Expected secret of %q, got %q", secret, s)
-		}
+			s := (*h.Match("webhook").TriggerRule.And)[0].Match.Secret
+			if s != secret {
+				t.Errorf("Expected secret of %q, got %q", secret, s)
+			}
+		})
 	}
 }
 

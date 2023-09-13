@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -124,7 +125,7 @@ func TestWebhook(t *testing.T) {
 					t.Errorf("client.Do failed: %s", err)
 				}
 
-				body, err := ioutil.ReadAll(res.Body)
+				body, err := io.ReadAll(res.Body)
 				res.Body.Close()
 				if err != nil {
 					t.Errorf("POST %q: failed to ready body: %s", tt.desc, err)
@@ -166,13 +167,13 @@ func TestWebhook(t *testing.T) {
 }
 
 func buildHookecho(t *testing.T) (binPath string, cleanupFn func()) {
-	tmp, err := ioutil.TempDir("", "hookecho-test-")
+	tmp, err := os.MkdirTemp("", "hookecho-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
 		if cleanupFn == nil {
-			os.RemoveAll(tmp)
+			_ = os.RemoveAll(tmp)
 		}
 	}()
 
@@ -186,19 +187,19 @@ func buildHookecho(t *testing.T) (binPath string, cleanupFn func()) {
 		t.Fatalf("Building hookecho: %v", err)
 	}
 
-	return binPath, func() { os.RemoveAll(tmp) }
+	return binPath, func() { _ = os.RemoveAll(tmp) }
 }
 
 func genConfig(t *testing.T, bin, hookTemplate string) (configPath string, cleanupFn func()) {
 	tmpl := template.Must(template.ParseFiles(hookTemplate))
 
-	tmp, err := ioutil.TempDir("", "webhook-config-")
+	tmp, err := os.MkdirTemp("", "webhook-config-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
 		if cleanupFn == nil {
-			os.RemoveAll(tmp)
+			_ = os.RemoveAll(tmp)
 		}
 	}()
 
@@ -209,7 +210,9 @@ func genConfig(t *testing.T, bin, hookTemplate string) (configPath string, clean
 	if err != nil {
 		t.Fatalf("Creating config template: %v", err)
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		_ = file.Close()
+	}(file)
 
 	data := struct{ Hookecho string }{filepath.FromSlash(bin)}
 	if runtime.GOOS == "windows" {
@@ -230,7 +233,7 @@ func buildWebhook(t *testing.T) (binPath string, cleanupFn func()) {
 	}
 	defer func() {
 		if cleanupFn == nil {
-			os.RemoveAll(tmp)
+			_ = os.RemoveAll(tmp)
 		}
 	}()
 
@@ -244,7 +247,7 @@ func buildWebhook(t *testing.T) (binPath string, cleanupFn func()) {
 		t.Fatalf("Building webhook: %v", err)
 	}
 
-	return binPath, func() { os.RemoveAll(tmp) }
+	return binPath, func() { _ = os.RemoveAll(tmp) }
 }
 
 func serverAddress(t *testing.T) (string, string) {
@@ -292,8 +295,8 @@ func killAndWait(cmd *exec.Cmd) {
 		return
 	}
 
-	cmd.Process.Kill()
-	cmd.Wait()
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
 }
 
 // webhookEnv returns the process environment without any existing hook
