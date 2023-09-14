@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/ghodss/yaml"
+	"github.com/hashicorp/go-multierror"
 )
 
 // Constants used to specify the parameter source
@@ -62,12 +63,11 @@ func (e *ParameterNodeError) Error() string {
 
 // IsParameterNodeError returns whether err is of type ParameterNodeError.
 func IsParameterNodeError(err error) bool {
-	switch err.(type) {
-	case *ParameterNodeError:
+	var e = &ParameterNodeError{}
+	if errors.As(err, &e) {
 		return true
-	default:
-		return false
 	}
+	return false
 }
 
 // SignatureError describes an invalid payload signature passed to Hook.
@@ -108,13 +108,19 @@ func IsSignatureError(err error) bool {
 // ArgumentError describes an invalid argument passed to Hook.
 type ArgumentError struct {
 	Argument Argument
+	err      error
+}
+
+// Unwrap returns the underlying error. Implements errors.Unwrap.
+func (e *ArgumentError) Unwrap() error {
+	return e.err
 }
 
 func (e *ArgumentError) Error() string {
 	if e == nil {
 		return "<nil>"
 	}
-	return fmt.Sprintf("couldn't retrieve argument for %+v", e.Argument)
+	return fmt.Sprintf("couldn't retrieve argument for %+v: %s", e.Argument, e.err)
 }
 
 // SourceError describes an invalid source passed to Hook.
@@ -413,14 +419,14 @@ func GetParameter(s string, params interface{}) (interface{}, error) {
 func ExtractParameterAsString(s string, params interface{}) (string, error) {
 	pValue, err := GetParameter(s, params)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parameter extraction failed: %w", err)
 	}
 
 	switch v := reflect.ValueOf(pValue); v.Kind() {
 	case reflect.Array, reflect.Map, reflect.Slice:
 		r, err := json.Marshal(pValue)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("JSON encode failed: %w", err)
 		}
 
 		return string(r), nil
@@ -440,8 +446,19 @@ type Argument struct {
 }
 
 // Get Argument method returns the value for the Argument's key name
-// based on the Argument's source
+// based on the Argument's source.
+// Wraps the error in an ArgumentError if any.
 func (ha *Argument) Get(r *Request) (string, error) {
+	value, err := ha.get(r)
+	if err != nil {
+		return value, &ArgumentError{*ha, err}
+	}
+	return value, nil
+}
+
+// Get Argument method returns the value for the Argument's key name
+// based on the Argument's source
+func (ha *Argument) get(r *Request) (string, error) {
 	var source *map[string]interface{}
 	key := ha.Name
 
@@ -479,7 +496,7 @@ func (ha *Argument) Get(r *Request) (string, error) {
 	case SourceEntirePayload:
 		res, err := json.Marshal(&r.Payload)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("JSON encode failed: %w", err)
 		}
 
 		return string(res), nil
@@ -487,7 +504,7 @@ func (ha *Argument) Get(r *Request) (string, error) {
 	case SourceEntireHeaders:
 		res, err := json.Marshal(&r.Headers)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("JSON encode failed: %w", err)
 		}
 
 		return string(res), nil
@@ -569,7 +586,7 @@ type Hook struct {
 	ResponseMessage                     string          `json:"response-message,omitempty"`
 	ResponseHeaders                     ResponseHeaders `json:"response-headers,omitempty"`
 	CaptureCommandOutput                bool            `json:"include-command-output-in-response,omitempty"`
-	StreamCommandOutput 				bool 			`json:"stream-command-output,omitempty"`
+	StreamCommandOutput                 bool            `json:"stream-command-output,omitempty"`
 	CaptureCommandOutputOnError         bool            `json:"include-command-output-in-response-on-error,omitempty"`
 	PassEnvironmentToCommand            []Argument      `json:"pass-environment-to-command,omitempty"`
 	PassArgumentsToCommand              []Argument      `json:"pass-arguments-to-command,omitempty"`
@@ -585,13 +602,13 @@ type Hook struct {
 
 // ParseJSONParameters decodes specified arguments to JSON objects and replaces the
 // string with the newly created object
-func (h *Hook) ParseJSONParameters(r *Request) []error {
-	errList := make([]error, 0)
+func (h *Hook) ParseJSONParameters(r *Request) error {
+	var result *multierror.Error
 
 	for i := range h.JSONStringParameters {
 		arg, err := h.JSONStringParameters[i].Get(r)
 		if err != nil {
-			errList = append(errList, &ArgumentError{h.JSONStringParameters[i]})
+			result = multierror.Append(result, err)
 		} else {
 			var newArg map[string]interface{}
 
@@ -600,7 +617,7 @@ func (h *Hook) ParseJSONParameters(r *Request) []error {
 
 			err := decoder.Decode(&newArg)
 			if err != nil {
-				errList = append(errList, &ParseError{err})
+				result = multierror.Append(result, &ParseError{err})
 				continue
 			}
 
@@ -624,54 +641,43 @@ func (h *Hook) ParseJSONParameters(r *Request) []error {
 
 				ReplaceParameter(key, source, newArg)
 			} else {
-				errList = append(errList, &SourceError{h.JSONStringParameters[i]})
+				result = multierror.Append(result, &SourceError{h.JSONStringParameters[i]})
 			}
 		}
 	}
-
-	if len(errList) > 0 {
-		return errList
-	}
-
-	return nil
+	return result.ErrorOrNil()
 }
 
 // ExtractCommandArguments creates a list of arguments, based on the
 // PassArgumentsToCommand property that is ready to be used with exec.Command()
-func (h *Hook) ExtractCommandArguments(r *Request) ([]string, []error) {
+func (h *Hook) ExtractCommandArguments(r *Request) ([]string, error) {
 	args := make([]string, 0)
-	errList := make([]error, 0)
-
+	var result *multierror.Error
 	args = append(args, h.ExecuteCommand)
 
 	for i := range h.PassArgumentsToCommand {
 		arg, err := h.PassArgumentsToCommand[i].Get(r)
 		if err != nil {
 			args = append(args, "")
-			errList = append(errList, &ArgumentError{h.PassArgumentsToCommand[i]})
+			result = multierror.Append(result, err)
 			continue
 		}
-
 		args = append(args, arg)
 	}
 
-	if len(errList) > 0 {
-		return args, errList
-	}
-
-	return args, nil
+	return args, result.ErrorOrNil()
 }
 
 // ExtractCommandArgumentsForEnv creates a list of arguments in key=value
 // format, based on the PassEnvironmentToCommand property that is ready to be used
 // with exec.Command().
-func (h *Hook) ExtractCommandArgumentsForEnv(r *Request) ([]string, []error) {
+func (h *Hook) ExtractCommandArgumentsForEnv(r *Request) ([]string, error) {
 	args := make([]string, 0)
-	errList := make([]error, 0)
+	var result *multierror.Error
 	for i := range h.PassEnvironmentToCommand {
 		arg, err := h.PassEnvironmentToCommand[i].Get(r)
 		if err != nil {
-			errList = append(errList, &ArgumentError{h.PassEnvironmentToCommand[i]})
+			result = multierror.Append(result, err)
 			continue
 		}
 
@@ -684,11 +690,7 @@ func (h *Hook) ExtractCommandArgumentsForEnv(r *Request) ([]string, []error) {
 		}
 	}
 
-	if len(errList) > 0 {
-		return args, errList
-	}
-
-	return args, nil
+	return args, result.ErrorOrNil()
 }
 
 // FileParameter describes a pass-file-to-command instance to be stored as file
@@ -701,13 +703,13 @@ type FileParameter struct {
 // ExtractCommandArgumentsForFile creates a list of arguments in key=value
 // format, based on the PassFileToCommand property that is ready to be used
 // with exec.Command().
-func (h *Hook) ExtractCommandArgumentsForFile(r *Request) ([]FileParameter, []error) {
+func (h *Hook) ExtractCommandArgumentsForFile(r *Request) ([]FileParameter, error) {
 	args := make([]FileParameter, 0)
-	errList := make([]error, 0)
+	var result *multierror.Error
 	for i := range h.PassFileToCommand {
 		arg, err := h.PassFileToCommand[i].Get(r)
 		if err != nil {
-			errList = append(errList, &ArgumentError{h.PassFileToCommand[i]})
+			result = multierror.Append(result, &ArgumentError{h.PassFileToCommand[i], err})
 			continue
 		}
 
@@ -731,11 +733,7 @@ func (h *Hook) ExtractCommandArgumentsForFile(r *Request) ([]FileParameter, []er
 		args = append(args, FileParameter{EnvName: h.PassFileToCommand[i].EnvName, Data: fileContent})
 	}
 
-	if len(errList) > 0 {
-		return args, errList
-	}
-
-	return args, nil
+	return args, result.ErrorOrNil()
 }
 
 // Hooks is an array of Hook objects

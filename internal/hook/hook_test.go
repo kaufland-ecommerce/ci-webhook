@@ -719,16 +719,18 @@ var orRuleTests = []struct {
 
 func TestOrRule(t *testing.T) {
 	for _, tt := range orRuleTests {
-		r := &Request{
-			Headers: tt.headers,
-			Query:   tt.query,
-			Payload: tt.payload,
-			Body:    tt.body,
-		}
-		ok, err := tt.rule.Evaluate(r)
-		if ok != tt.ok || (err != nil) != tt.err {
-			t.Errorf("%#v:\nexpected ok: %#v, err: %v\ngot ok: %#v err: %v", tt.desc, tt.ok, tt.err, ok, err)
-		}
+		t.Run(tt.desc, func(t *testing.T) {
+			r := &Request{
+				Headers: tt.headers,
+				Query:   tt.query,
+				Payload: tt.payload,
+				Body:    tt.body,
+			}
+			ok, err := tt.rule.Evaluate(r)
+			if ok != tt.ok || (err != nil) != tt.err {
+				t.Errorf("expected ok: %#v, err: %v\ngot ok: %#v err: %v", tt.ok, tt.err, ok, err)
+			}
+		})
 	}
 }
 

@@ -1,22 +1,24 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/kaufland-ecommerce/ci-webhook/internal/handler"
 	"github.com/kaufland-ecommerce/ci-webhook/internal/hook"
 	"github.com/kaufland-ecommerce/ci-webhook/internal/middleware"
 	"github.com/kaufland-ecommerce/ci-webhook/internal/pidfile"
@@ -151,18 +153,17 @@ func main() {
 		}
 	}
 
+	var logHandler slog.Handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	if *logPath != "" {
 		file, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
 		if err != nil {
 			logQueue = append(logQueue, fmt.Sprintf("error opening log file %q: %v", *logPath, err))
 			// we'll bail out below
 		} else {
-			log.SetOutput(file)
+			slog.NewTextHandler(file, &slog.HandlerOptions{Level: slog.LevelDebug})
 		}
 	}
-
-	log.SetPrefix("[webhook] ")
-	log.SetFlags(log.Ldate | log.Ltime)
+	slog.SetDefault(slog.New(logHandler))
 
 	if len(logQueue) != 0 {
 		for i := range logQueue {
@@ -335,6 +336,7 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprint(w, "Hook not found.")
 		return
 	}
+	requestLog := slog.Default().With("hook_id", matchedHook.ID, "request_id", req.ID)
 
 	// Check for allowed methods
 	var allowedMethod bool
@@ -491,10 +493,8 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// handle hook
-	errors := matchedHook.ParseJSONParameters(req)
-	for _, err := range errors {
-		log.Printf("[%s] error parsing JSON parameters: %s\n", req.ID, err)
-	}
+	err = matchedHook.ParseJSONParameters(req)
+	requestLog.Error("error parsing JSON parameters", "error", err)
 
 	var ok bool
 
@@ -524,34 +524,49 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set(responseHeader.Name, responseHeader.Value)
 		}
 
-		if matchedHook.StreamCommandOutput {
-			handleHook(matchedHook, req, w)
-		} else if matchedHook.CaptureCommandOutput {
-			response, err := handleHook(matchedHook, req, nil)
+		executor := handler.NewExecutor(matchedHook, req, requestLog)
 
+		switch {
+		case matchedHook.StreamCommandOutput:
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			// when streaming, we need to write the header before executing the command,
+			// and we can't bind the status code to command exit code
+			w.WriteHeader(http.StatusOK)
+			// create an io.Writer that flushes after every write operation
+			fw := &flushWriter{f: w.(http.Flusher), w: w}
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = executor.Execute(fw)
+			}()
+			wg.Wait()
+		case matchedHook.CaptureCommandOutput:
+			// create a buffer with io.Writer interface
+			buf := &bytes.Buffer{}
+			err = executor.Execute(buf)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
-				if matchedHook.CaptureCommandOutputOnError {
-					_, _ = fmt.Fprint(w, response)
-				} else {
+				if !matchedHook.CaptureCommandOutputOnError {
 					w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 					_, _ = fmt.Fprint(w, "Error occurred while executing the hook's command. Please check your logs for more details.")
+					break
 				}
-			} else {
-				// Check if a success return code is configured for the hook
-				if matchedHook.SuccessHttpResponseCode != 0 {
-					writeHttpResponseCode(w, req.ID, matchedHook.ID, matchedHook.SuccessHttpResponseCode)
-				}
-				_, _ = fmt.Fprint(w, response)
 			}
-		} else {
-			go handleHook(matchedHook, req, nil)
-
-			// Check if a success return code is configured for the hook
 			if matchedHook.SuccessHttpResponseCode != 0 {
 				writeHttpResponseCode(w, req.ID, matchedHook.ID, matchedHook.SuccessHttpResponseCode)
 			}
+			_, _ = fmt.Fprint(w, buf.String())
+		default:
+			go func() {
+				buf := &bytes.Buffer{}
+				err = executor.Execute(buf)
+				requestLog.Error("error executing hook's command", "error", err, "output", buf.String())
+			}()
 
+			if matchedHook.SuccessHttpResponseCode != 0 {
+				writeHttpResponseCode(w, req.ID, matchedHook.ID, matchedHook.SuccessHttpResponseCode)
+			}
 			_, _ = fmt.Fprint(w, matchedHook.ResponseMessage)
 		}
 		return
@@ -566,116 +581,6 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[%s] %s got matched, but didn't get triggered because the trigger rules were not satisfied\n", req.ID, matchedHook.ID)
 
 	_, _ = fmt.Fprint(w, "Hook rules were not satisfied.")
-}
-
-func handleHook(h *hook.Hook, r *hook.Request, w http.ResponseWriter) (string, error) {
-	var errors []error
-
-	// check the command exists
-	var lookpath string
-	if filepath.IsAbs(h.ExecuteCommand) || h.CommandWorkingDirectory == "" {
-		lookpath = h.ExecuteCommand
-	} else {
-		lookpath = filepath.Join(h.CommandWorkingDirectory, h.ExecuteCommand)
-	}
-
-	cmdPath, err := exec.LookPath(lookpath)
-	if err != nil {
-		log.Printf("[%s] error in %s", r.ID, err)
-
-		// check if parameters specified in execute-command by mistake
-		if strings.IndexByte(h.ExecuteCommand, ' ') != -1 {
-			s := strings.Fields(h.ExecuteCommand)[0]
-			log.Printf("[%s] use 'pass-arguments-to-command' to specify args for '%s'", r.ID, s)
-		}
-
-		return "", err
-	}
-
-	cmd := exec.Command(cmdPath)
-	cmd.Dir = h.CommandWorkingDirectory
-
-	cmd.Args, errors = h.ExtractCommandArguments(r)
-	for _, err := range errors {
-		log.Printf("[%s] error extracting command arguments: %s\n", r.ID, err)
-	}
-
-	var envs []string
-	envs, errors = h.ExtractCommandArgumentsForEnv(r)
-
-	for _, err := range errors {
-		log.Printf("[%s] error extracting command arguments for environment: %s\n", r.ID, err)
-	}
-
-	files, errors := h.ExtractCommandArgumentsForFile(r)
-
-	for _, err := range errors {
-		log.Printf("[%s] error extracting command arguments for file: %s\n", r.ID, err)
-	}
-
-	for i := range files {
-		tmpfile, err := os.CreateTemp(h.CommandWorkingDirectory, files[i].EnvName)
-		if err != nil {
-			log.Printf("[%s] error creating temp file [%s]", r.ID, err)
-			continue
-		}
-		log.Printf("[%s] writing env %s file %s", r.ID, files[i].EnvName, tmpfile.Name())
-		if _, err := tmpfile.Write(files[i].Data); err != nil {
-			log.Printf("[%s] error writing file %s [%s]", r.ID, tmpfile.Name(), err)
-			continue
-		}
-		if err := tmpfile.Close(); err != nil {
-			log.Printf("[%s] error closing file %s [%s]", r.ID, tmpfile.Name(), err)
-			continue
-		}
-
-		files[i].File = tmpfile
-		envs = append(envs, files[i].EnvName+"="+tmpfile.Name())
-	}
-
-	cmd.Env = append(os.Environ(), envs...)
-
-	log.Printf("[%s] executing %s (%s) with arguments %q and environment %s using %s as cwd\n", r.ID, h.ExecuteCommand, cmd.Path, cmd.Args, envs, cmd.Dir)
-
-	var out []byte
-	if w != nil {
-		log.Printf("[%s] command output will be streamed to response", r.ID)
-
-		// Implementation from https://play.golang.org/p/PpbPyXbtEs
-		// as described in https://stackoverflow.com/questions/19292113/not-buffered-http-responsewritter-in-golang
-		fw := flushWriter{w: w}
-		if f, ok := w.(http.Flusher); ok {
-			fw.f = f
-		}
-		cmd.Stderr = &fw
-		cmd.Stdout = &fw
-
-		if err := cmd.Run(); err != nil {
-			log.Printf("[%s] error occurred: %+v\n", r.ID, err)
-		}
-	} else {
-		out, err = cmd.CombinedOutput()
-
-		log.Printf("[%s] command output: %s\n", r.ID, out)
-
-		if err != nil {
-			log.Printf("[%s] error occurred: %+v\n", r.ID, err)
-		}
-	}
-
-	for i := range files {
-		if files[i].File != nil {
-			log.Printf("[%s] removing file %s\n", r.ID, files[i].File.Name())
-			err := os.Remove(files[i].File.Name())
-			if err != nil {
-				log.Printf("[%s] error removing file %s [%s]", r.ID, files[i].File.Name(), err)
-			}
-		}
-	}
-
-	log.Printf("[%s] finished handling %s\n", r.ID, h.ID)
-
-	return string(out), err
 }
 
 func writeHttpResponseCode(w http.ResponseWriter, rid, hookId string, responseCode int) {

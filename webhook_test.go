@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +18,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/kaufland-ecommerce/ci-webhook/internal/handler"
 	"github.com/kaufland-ecommerce/ci-webhook/internal/hook"
 )
 
@@ -33,7 +34,7 @@ func TestStaticParams(t *testing.T) {
 	spHeaders["Accept"] = "*/*"
 
 	// case 2: binary with spaces in its name
-	d1 := []byte("#!/bin/sh\n/bin/echo\n")
+	d1 := []byte("#!/bin/sh\n/bin/echo $1\n")
 	if err := os.WriteFile("/tmp/with space", d1, 0755); err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -51,18 +52,16 @@ func TestStaticParams(t *testing.T) {
 	}
 
 	b := &bytes.Buffer{}
-	log.SetOutput(b)
-
 	r := &hook.Request{
 		ID:      "test",
 		Headers: spHeaders,
 	}
-	if _, err := handleHook(spHook, r, nil); err != nil {
+	if err := handler.NewExecutor(spHook, r, slog.Default()).Execute(b); err != nil {
 		t.Fatalf("Unexpected error: %v\n", err)
 	}
-	matched, _ := regexp.MatchString("(?s)command output: .*static-params-name-space", b.String())
+	matched, _ := regexp.MatchString("passed", b.String())
 	if !matched {
-		t.Fatalf("Unexpected log output:\n%sn", b)
+		t.Fatalf("Unexpected log output:\n%s", b)
 	}
 }
 
@@ -90,6 +89,7 @@ func TestWebhook(t *testing.T) {
 				b := &buffer{}
 
 				cmd := exec.Command(webhook, args...)
+				cmd.Stdout = b
 				cmd.Stderr = b
 				cmd.Env = webhookEnv()
 				cmd.Args[0] = "webhook"
@@ -1146,7 +1146,7 @@ env: HOOK_head_commit.timestamp=2013-03-12T08:14:29-07:00
 
 	// Check logs
 	{"static params should pass", "static-params-ok", nil, "POST", nil, "application/json", `{}`, false, http.StatusOK, "arg: passed\n", `(?s)command output: arg: passed`},
-	{"command with space logs warning", "warn-on-space", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, "Error occurred while executing the hook's command. Please check your logs for more details.", `(?s)error in exec:.*use 'pass[-]arguments[-]to[-]command' to specify args`},
+	{"command with space logs warning", "warn-on-space", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, "Error occurred while executing the hook's command. Please check your logs for more details.", `(?s)WARN.*use 'pass[-]arguments[-]to[-]command' to specify args`},
 	{"unsupported content type error", "github", nil, "POST", map[string]string{"Content-Type": "nonexistent/format"}, "application/json", `{}`, false, http.StatusBadRequest, `Hook rules were not satisfied.`, `(?s)error parsing body payload due to unsupported content type header:`},
 }
 
