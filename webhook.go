@@ -17,9 +17,9 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/adnanh/webhook/internal/hook"
-	"github.com/adnanh/webhook/internal/middleware"
-	"github.com/adnanh/webhook/internal/pidfile"
+	"github.com/kaufland-ecommerce/ci-webhook/internal/hook"
+	"github.com/kaufland-ecommerce/ci-webhook/internal/middleware"
+	"github.com/kaufland-ecommerce/ci-webhook/internal/pidfile"
 
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/mux"

@@ -37,7 +37,7 @@ test: deps ## Execute tests
 	go test ./...
 
 deps: ## Install dependencies using go get
-	go get -d -v -t ./...
+	go mod download
 
 clean: ## Remove building artifacts
 	rm -rf build
