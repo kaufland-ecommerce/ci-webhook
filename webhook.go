@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -528,19 +527,30 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 
 		switch {
 		case matchedHook.StreamCommandOutput:
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			// when streaming, we need to write the header before executing the command,
-			// and we can't bind the status code to command exit code
-			w.WriteHeader(http.StatusOK)
-			// create an io.Writer that flushes after every write operation
-			fw := &flushWriter{f: w.(http.Flusher), w: w}
-			var wg sync.WaitGroup
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				_ = executor.Execute(fw)
-			}()
-			wg.Wait()
+			if flusher, ok := w.(http.Flusher); ok {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				// when streaming, we need to write the header before executing the command,
+				// and we can't bind the status code to command exit code
+				w.WriteHeader(http.StatusOK)
+				// create an io.Writer that flushes after every write operation
+				fw := &flushWriter{f: flusher, w: w}
+				// run command
+				waiter := make(chan error)
+				var exitCode int
+				go func() {
+					defer close(waiter)
+					waiter <- executor.Execute(fw)
+				}()
+				if err := <-waiter; err != nil {
+					exitCode = 1
+				}
+				// print exit code
+				_, _ = fmt.Fprintf(w, "\n---\n%d\n", exitCode)
+				flusher.Flush()
+				return // done handling the streaming request
+			}
+			requestLog.Error("cant obtain flusher. are you running with `-debug`? streaming is not available in debug mode, will fallback to non-streaming mode")
+			fallthrough
 		case matchedHook.CaptureCommandOutput:
 			// create a buffer with io.Writer interface
 			buf := &bytes.Buffer{}
@@ -561,7 +571,6 @@ func hookHandler(w http.ResponseWriter, r *http.Request) {
 			go func() {
 				buf := &bytes.Buffer{}
 				err = executor.Execute(buf)
-				requestLog.Error("error executing hook's command", "error", err, "output", buf.String())
 			}()
 
 			if matchedHook.SuccessHttpResponseCode != 0 {

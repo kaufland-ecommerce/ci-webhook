@@ -150,6 +150,7 @@ func (e *Executor) Execute(w io.Writer) error {
 	commandOutputBuf := &bytes.Buffer{}
 	mw := io.MultiWriter(w, commandOutputBuf)
 	err := e.execHookCommand(mw)
+	e.logger.Error("error executing hook's command", "error", err)
 	e.logger.Info("command output: " + commandOutputBuf.String())
 	return err
 }
