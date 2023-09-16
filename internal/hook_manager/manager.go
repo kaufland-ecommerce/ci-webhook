@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -15,20 +16,20 @@ import (
 
 type Manager struct {
 	ctx          context.Context
-	files        hook.HooksFiles
+	files        HooksFiles
 	logger       *slog.Logger
 	asTemplate   bool
-	hooksInFiles map[string]hook.Hooks
+	hooksInFiles map[string]Hooks
 	watcher      *fsnotify.Watcher
 	notifyChan   chan struct{}
 	hotReload    bool
 }
 
-func NewManager(ctx context.Context, files hook.HooksFiles, asTemplate bool, hotReload bool) *Manager {
+func NewManager(ctx context.Context, files HooksFiles, asTemplate bool, hotReload bool) *Manager {
 	return &Manager{
 		ctx:          ctx,
 		notifyChan:   make(chan struct{}, 5),
-		hooksInFiles: make(map[string]hook.Hooks),
+		hooksInFiles: make(map[string]Hooks),
 		files:        files,
 		logger:       slog.Default(),
 		asTemplate:   asTemplate,
@@ -65,7 +66,7 @@ func (m *Manager) Load() error {
 	// load and parse hooks
 	for _, hooksFilePath := range m.files {
 		m.logger.Info("attempting to load hooks", "path", hooksFilePath)
-		newHooks := hook.Hooks{}
+		newHooks := Hooks{}
 
 		err := newHooks.LoadFromFile(hooksFilePath, m.asTemplate)
 		if err != nil {
@@ -111,7 +112,7 @@ func (m *Manager) matchLoadedHook(id string) *hook.Hook {
 }
 
 func (m *Manager) reloadHooks(hooksFilePath string) {
-	hooksInFile := hook.Hooks{}
+	hooksInFile := Hooks{}
 	// parse and swap
 	m.logger.Info("attempting to reload hooks from file", "path", hooksFilePath)
 	err := hooksInFile.LoadFromFile(hooksFilePath, m.asTemplate)
@@ -246,4 +247,21 @@ func (m *Manager) watchForFileChange(ctx context.Context) {
 			m.logger.Error("watcher error", "error", err)
 		}
 	}
+}
+
+// HooksFiles is a slice of String
+type HooksFiles []string
+
+func (h *HooksFiles) String() string {
+	if len(*h) == 0 {
+		return "hooks.json"
+	}
+
+	return strings.Join(*h, ", ")
+}
+
+// Set method appends new string
+func (h *HooksFiles) Set(value string) error {
+	*h = append(*h, value)
+	return nil
 }

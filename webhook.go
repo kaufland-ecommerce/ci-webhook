@@ -52,7 +52,7 @@ var (
 	pidPath            = flag.String("pidfile", "", "create PID file at the given path")
 
 	responseHeaders hook.ResponseHeaders
-	hooksFiles      hook.HooksFiles
+	hooksFiles      hook_manager.HooksFiles
 
 	pidFile *pidfile.PIDFile
 )
