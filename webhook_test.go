@@ -56,7 +56,9 @@ func TestStaticParams(t *testing.T) {
 		ID:      "test",
 		Headers: spHeaders,
 	}
-	if err := handler.NewExecutor(spHook, r, slog.Default()).Execute(b); err != nil {
+	if err := handler.NewExecutor(spHook, r,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	).Execute(b); err != nil {
 		t.Fatalf("Unexpected error: %v\n", err)
 	}
 	matched, _ := regexp.MatchString("passed", b.String())
@@ -1140,14 +1142,14 @@ env: HOOK_head_commit.timestamp=2013-03-12T08:14:29-07:00
 	{"don't capture output on success by default", "capture-command-output-on-success-not-by-default", nil, "POST", nil, "application/json", `{}`, false, http.StatusOK, ``, ``},
 	{"capture output on success with flag set", "capture-command-output-on-success-yes-with-flag", nil, "POST", nil, "application/json", `{}`, false, http.StatusOK, `arg: exit=0
 `, ``},
-	{"don't capture output on error by default", "capture-command-output-on-error-not-by-default", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, `Error occurred while executing the hook's command. Please check your logs for more details.`, ``},
+	{"don't capture output on error by default", "capture-command-output-on-error-not-by-default", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, `Error occurred while executing the hook's command. Please check logs for more details.`, ``},
 	{"capture output on error with extra flag set", "capture-command-output-on-error-yes-with-extra-flag", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, `arg: exit=1
 `, ``},
 
 	// Check logs
 	{"static params should pass", "static-params-ok", nil, "POST", nil, "application/json", `{}`, false, http.StatusOK, "arg: passed\n", `(?s)command output: arg: passed`},
-	{"command with space logs warning", "warn-on-space", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, "Error occurred while executing the hook's command. Please check your logs for more details.", `(?s)WARN.*use 'pass[-]arguments[-]to[-]command' to specify args`},
-	{"unsupported content type error", "github", nil, "POST", map[string]string{"Content-Type": "nonexistent/format"}, "application/json", `{}`, false, http.StatusBadRequest, `Hook rules were not satisfied.`, `(?s)error parsing body payload due to unsupported content type header:`},
+	{"command with space logs warning", "warn-on-space", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, "Error occurred while executing the hook's command. Please check logs for more details.", `(?s)WARN.*use 'pass[-]arguments[-]to[-]command' to specify args`},
+	{"unsupported content type error", "github", nil, "POST", map[string]string{"Content-Type": "nonexistent/format"}, "application/json", `{}`, false, http.StatusBadRequest, `Hook rules were not satisfied.`, `(?s)unsupported content type, skip parsing body payload`},
 }
 
 // buffer provides a concurrency-safe bytes.Buffer to tests above.

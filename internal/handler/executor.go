@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -128,29 +127,24 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 	e.logger.Info("executing command",
 		"command", cmd.Path,
 		"arguments", cmd.Args,
-		"environment", cmd.Env,
+		// log only envs set by webhook, not global env; otherwise it's leaking secrets to logs
+		"environment", envs,
 		"working_directory", cmd.Dir,
 	)
-
-	log.Printf("[%s] executing %s (%s) with arguments %q and environment %s using %s as cwd\n",
-		e.req.ID, e.hook.ExecuteCommand, cmd.Path, cmd.Args, envs, cmd.Dir)
-
 	cmd.Stderr = w
 	cmd.Stdout = w
 
-	err = cmd.Run()
-	if err != nil {
-		log.Printf("[%s] error occurred: %+v\n", e.req.ID, err)
-	}
-	log.Printf("[%s] finished handling %s\n", e.req.ID, e.hook.ID)
-	return err
+	return cmd.Run()
 }
 
 func (e *Executor) Execute(w io.Writer) error {
 	commandOutputBuf := &bytes.Buffer{}
 	mw := io.MultiWriter(w, commandOutputBuf)
 	err := e.execHookCommand(mw)
-	e.logger.Error("error executing hook's command", "error", err)
+	if err != nil {
+		e.logger.Error("error executing hook's command", "error", err)
+	}
 	e.logger.Info("command output: " + commandOutputBuf.String())
+	e.logger.Info("finished handling")
 	return err
 }

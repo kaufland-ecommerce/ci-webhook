@@ -602,6 +602,7 @@ type Hook struct {
 
 // ParseJSONParameters decodes specified arguments to JSON objects and replaces the
 // string with the newly created object
+// todo: move to Request
 func (h *Hook) ParseJSONParameters(r *Request) error {
 	var result *multierror.Error
 
