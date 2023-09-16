@@ -50,18 +50,18 @@ func (h *Hooks) LoadFromFile(path string, asTemplate bool) error {
 
 // Append appends hooks unless the new hooks contain a hook with an ID that already exists
 func (h *Hooks) Append(other *Hooks) error {
-	for _, hook := range *other {
-		if h.Match(hook.ID) != nil {
-			return fmt.Errorf("hook with ID %s is already defined", hook.ID)
+	for _, elem := range *other {
+		if h.Match(elem.ID) != nil {
+			return fmt.Errorf("hook with ID %s is already defined", elem.ID)
 		}
 
-		*h = append(*h, hook)
+		*h = append(*h, elem)
 	}
 
 	return nil
 }
 
-// Match iterates through Hooks and returns first one that matches the given ID,
+// Match will iterate through Hooks and returns the first one that matches the given ID,
 // if no hook matches the given ID, nil is returned
 func (h *Hooks) Match(id string) *hook.Hook {
 	for i := range *h {
