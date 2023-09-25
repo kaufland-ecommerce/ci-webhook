@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/kaufland-ecommerce/ci-webhook/internal/handler"
 	"github.com/kaufland-ecommerce/ci-webhook/internal/hook"
 	"github.com/kaufland-ecommerce/ci-webhook/internal/hook_manager"
@@ -19,7 +21,6 @@ import (
 	"github.com/kaufland-ecommerce/ci-webhook/internal/setup"
 
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/gorilla/mux"
 )
 
 const (
@@ -180,8 +181,7 @@ func main() {
 	)
 
 	// setup HTTP Router & Server
-	r := mux.NewRouter()
-
+	r := chi.NewRouter()
 	r.Use(middleware.RequestID(
 		middleware.UseXRequestIDHeaderOption(*useXRequestID),
 		middleware.XRequestIDLimitOption(*xRequestIDLimit),
@@ -192,17 +192,18 @@ func main() {
 	if *debug {
 		r.Use(middleware.Dumper(log.Writer()))
 	}
-
-	hooksURL := makeRoutePattern(hooksURLPrefix)
-
+	// healthcheck handler
 	r.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		for _, responseHeader := range responseHeaders {
 			w.Header().Set(responseHeader.Name, responseHeader.Value)
 		}
 		_, _ = fmt.Fprint(w, "OK")
 	})
-	r.Handle(hooksURL, reqHandler)
-
+	// hooks handler
+	r.Handle(
+		handler.MakeRoutePattern(hooksURLPrefix),
+		reqHandler,
+	)
 	// Create common HTTP server settings
 	server := &http.Server{
 		Addr:    addr,
@@ -211,7 +212,7 @@ func main() {
 
 	// Serve HTTP
 	if !*secure {
-		logger.Info(fmt.Sprintf("serving hooks on http://%s%s", addr, makeHumanPattern(hooksURLPrefix)))
+		logger.Info(fmt.Sprintf("serving hooks on http://%s%s", addr, handler.MakeHumanPattern(hooksURLPrefix)))
 		if err := server.Serve(ln); err != nil {
 			logger.Error("error serving http", "error", err)
 		}
@@ -226,7 +227,7 @@ func main() {
 	}
 	server.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler)) // disable http/2
 
-	logger.Info(fmt.Sprintf("serving hooks on https://%s%s", addr, makeHumanPattern(hooksURLPrefix)))
+	logger.Info(fmt.Sprintf("serving hooks on https://%s%s", addr, handler.MakeHumanPattern(hooksURLPrefix)))
 	if err := server.ServeTLS(ln, *cert, *key); err != nil {
 		logger.Error("error serving https", "error", err)
 	}
@@ -244,23 +245,4 @@ func parseMethodList(methods string) []string {
 		normalized = append(normalized, v)
 	}
 	return normalized
-}
-
-// makeRoutePattern builds a pattern matching URL for the mux.
-func makeRoutePattern(prefix *string) string {
-	return makeBaseURL(prefix) + "/{id:.*}"
-}
-
-// makeHumanPattern builds a human-friendly URL for display.
-func makeHumanPattern(prefix *string) string {
-	return makeBaseURL(prefix) + "/{id}"
-}
-
-// makeBaseURL creates the base URL before any mux pattern matching.
-func makeBaseURL(prefix *string) string {
-	if prefix == nil || *prefix == "" {
-		return ""
-	}
-
-	return "/" + *prefix
 }

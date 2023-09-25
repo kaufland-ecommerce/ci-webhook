@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/gorilla/mux"
+	"github.com/go-chi/chi/v5"
 
 	"github.com/kaufland-ecommerce/ci-webhook/internal/hook"
 	"github.com/kaufland-ecommerce/ci-webhook/internal/hook_manager"
@@ -55,10 +55,9 @@ func (r *RequestHandler) ServeHTTP(w http.ResponseWriter, request *http.Request)
 		"path", request.URL.Path,
 		"remote_addr", request.RemoteAddr,
 	)
-	// TODO: rename this to avoid confusion with Request.ID
-	id := mux.Vars(request)["id"]
+	hookId := chi.URLParam(request, "*")
 	// try loading the hook
-	matchedHook := r.hookManager.Get(id)
+	matchedHook := r.hookManager.Get(hookId)
 	if matchedHook == nil {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = fmt.Fprint(w, "Hook not found.")
@@ -93,4 +92,23 @@ func (fw *flushWriter) Write(p []byte) (n int, err error) {
 		fw.w.Flush()
 	}
 	return
+}
+
+// MakeRoutePattern builds a pattern matching URL for the mux.
+func MakeRoutePattern(prefix *string) string {
+	return makeBaseURL(prefix) + "/*"
+}
+
+// MakeHumanPattern builds a human-friendly URL for display.
+func MakeHumanPattern(prefix *string) string {
+	return makeBaseURL(prefix) + "/{hookId}"
+}
+
+// makeBaseURL creates the base URL before any mux pattern matching.
+func makeBaseURL(prefix *string) string {
+	if prefix == nil || *prefix == "" {
+		return ""
+	}
+
+	return "/" + *prefix
 }
