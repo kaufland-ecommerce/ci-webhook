@@ -314,3 +314,26 @@
           name: X-Hub-Signature
         secret: mysecret
         type: payload-hmac-sha1
+
+- id: should-stream-output
+  execute-command: ./test/test.sh
+  command-working-directory: .
+  success-http-response-code: 200
+  incoming-payload-content-type: text/plain
+  http-methods:
+    - GET
+    - POST
+  include-command-output-in-response: true
+  include-command-output-in-response-on-error: true
+  stream-command-output: true
+  pass-environment-to-command:
+    - source: url
+      name: exit_code
+      envname: TEST_EXIT_CODE
+    - source: url
+      name: sleep
+      envname: TEST_SLEEP
+    - source: url
+      name: drip
+      envname: TEST_DRIP
+  trigger-rule-mismatch-http-response-code: 400

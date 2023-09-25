@@ -1,31 +1,19 @@
 package hook
 
 import (
-	"bytes"
-	"crypto/hmac"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
-	"crypto/subtle"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash"
-	"log"
-	"math"
+	"log/slog"
 	"net"
 	"net/textproto"
 	"os"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
-	"text/template"
-	"time"
 
-	"github.com/ghodss/yaml"
+	"github.com/hashicorp/go-multierror"
 )
 
 // Constants used to specify the parameter source
@@ -62,59 +50,11 @@ func (e *ParameterNodeError) Error() string {
 
 // IsParameterNodeError returns whether err is of type ParameterNodeError.
 func IsParameterNodeError(err error) bool {
-	switch err.(type) {
-	case *ParameterNodeError:
+	var e = &ParameterNodeError{}
+	if errors.As(err, &e) {
 		return true
-	default:
-		return false
 	}
-}
-
-// SignatureError describes an invalid payload signature passed to Hook.
-type SignatureError struct {
-	Signature  string
-	Signatures []string
-
-	emptyPayload bool
-}
-
-func (e *SignatureError) Error() string {
-	if e == nil {
-		return "<nil>"
-	}
-
-	var empty string
-	if e.emptyPayload {
-		empty = " on empty payload"
-	}
-
-	if e.Signatures != nil {
-		return fmt.Sprintf("invalid payload signatures %s%s", e.Signatures, empty)
-	}
-
-	return fmt.Sprintf("invalid payload signature %s%s", e.Signature, empty)
-}
-
-// IsSignatureError returns whether err is of type SignatureError.
-func IsSignatureError(err error) bool {
-	switch err.(type) {
-	case *SignatureError:
-		return true
-	default:
-		return false
-	}
-}
-
-// ArgumentError describes an invalid argument passed to Hook.
-type ArgumentError struct {
-	Argument Argument
-}
-
-func (e *ArgumentError) Error() string {
-	if e == nil {
-		return "<nil>"
-	}
-	return fmt.Sprintf("couldn't retrieve argument for %+v", e.Argument)
+	return false
 }
 
 // SourceError describes an invalid source passed to Hook.
@@ -167,114 +107,6 @@ func ExtractSignatures(source, prefix string) []string {
 	return []string{
 		strings.TrimPrefix(source, prefix),
 	}
-}
-
-// ValidateMAC will verify that the expected mac for the given hash will match
-// the one provided.
-func ValidateMAC(payload []byte, mac hash.Hash, signatures []string) (string, error) {
-	// Write the payload to the provided hash.
-	_, err := mac.Write(payload)
-	if err != nil {
-		return "", err
-	}
-
-	actualMAC := hex.EncodeToString(mac.Sum(nil))
-
-	for _, signature := range signatures {
-		if hmac.Equal([]byte(signature), []byte(actualMAC)) {
-			return actualMAC, err
-		}
-	}
-
-	e := &SignatureError{Signatures: signatures}
-	if len(payload) == 0 {
-		e.emptyPayload = true
-	}
-
-	return actualMAC, e
-}
-
-// CheckPayloadSignature calculates and verifies SHA1 signature of the given payload
-func CheckPayloadSignature(payload []byte, secret, signature string) (string, error) {
-	if secret == "" {
-		return "", errors.New("signature validation secret can not be empty")
-	}
-
-	// Extract the signatures.
-	signatures := ExtractSignatures(signature, "sha1=")
-
-	// Validate the MAC.
-	return ValidateMAC(payload, hmac.New(sha1.New, []byte(secret)), signatures)
-}
-
-// CheckPayloadSignature256 calculates and verifies SHA256 signature of the given payload
-func CheckPayloadSignature256(payload []byte, secret, signature string) (string, error) {
-	if secret == "" {
-		return "", errors.New("signature validation secret can not be empty")
-	}
-
-	// Extract the signatures.
-	signatures := ExtractSignatures(signature, "sha256=")
-
-	// Validate the MAC.
-	return ValidateMAC(payload, hmac.New(sha256.New, []byte(secret)), signatures)
-}
-
-// CheckPayloadSignature512 calculates and verifies SHA512 signature of the given payload
-func CheckPayloadSignature512(payload []byte, secret, signature string) (string, error) {
-	if secret == "" {
-		return "", errors.New("signature validation secret can not be empty")
-	}
-
-	// Extract the signatures.
-	signatures := ExtractSignatures(signature, "sha512=")
-
-	// Validate the MAC.
-	return ValidateMAC(payload, hmac.New(sha512.New, []byte(secret)), signatures)
-}
-
-func CheckScalrSignature(r *Request, signingKey string, checkDate bool) (bool, error) {
-	if r.Headers == nil {
-		return false, nil
-	}
-
-	// Check for the signature and date headers
-	if _, ok := r.Headers["X-Signature"]; !ok {
-		return false, nil
-	}
-	if _, ok := r.Headers["Date"]; !ok {
-		return false, nil
-	}
-	if signingKey == "" {
-		return false, errors.New("signature validation signing key can not be empty")
-	}
-
-	providedSignature := r.Headers["X-Signature"].(string)
-	dateHeader := r.Headers["Date"].(string)
-	mac := hmac.New(sha1.New, []byte(signingKey))
-	mac.Write(r.Body)
-	mac.Write([]byte(dateHeader))
-	expectedSignature := hex.EncodeToString(mac.Sum(nil))
-
-	if !hmac.Equal([]byte(providedSignature), []byte(expectedSignature)) {
-		return false, &SignatureError{Signature: providedSignature}
-	}
-
-	if !checkDate {
-		return true, nil
-	}
-	// Example format: Fri 08 Sep 2017 11:24:32 UTC
-	date, err := time.Parse("Mon 02 Jan 2006 15:04:05 MST", dateHeader)
-	if err != nil {
-		return false, err
-	}
-	now := time.Now()
-	delta := math.Abs(now.Sub(date).Seconds())
-
-	if delta > 300 {
-		return false, &SignatureError{Signature: "outdated"}
-	}
-	return true, nil
 }
 
 // CheckIPWhitelist makes sure the provided remote address (of the form IP:port) falls within the provided IP range
@@ -413,14 +245,14 @@ func GetParameter(s string, params interface{}) (interface{}, error) {
 func ExtractParameterAsString(s string, params interface{}) (string, error) {
 	pValue, err := GetParameter(s, params)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parameter extraction failed: %w", err)
 	}
 
 	switch v := reflect.ValueOf(pValue); v.Kind() {
 	case reflect.Array, reflect.Map, reflect.Slice:
 		r, err := json.Marshal(pValue)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("JSON encode failed: %w", err)
 		}
 
 		return string(r), nil
@@ -428,84 +260,6 @@ func ExtractParameterAsString(s string, params interface{}) (string, error) {
 	default:
 		return fmt.Sprintf("%v", pValue), nil
 	}
-}
-
-// Argument type specifies the parameter key name and the source it should
-// be extracted from
-type Argument struct {
-	Source       string `json:"source,omitempty"`
-	Name         string `json:"name,omitempty"`
-	EnvName      string `json:"envname,omitempty"`
-	Base64Decode bool   `json:"base64decode,omitempty"`
-}
-
-// Get Argument method returns the value for the Argument's key name
-// based on the Argument's source
-func (ha *Argument) Get(r *Request) (string, error) {
-	var source *map[string]interface{}
-	key := ha.Name
-
-	switch ha.Source {
-	case SourceHeader:
-		source = &r.Headers
-		key = textproto.CanonicalMIMEHeaderKey(ha.Name)
-
-	case SourceQuery, SourceQueryAlias:
-		source = &r.Query
-
-	case SourcePayload:
-		source = &r.Payload
-
-	case SourceString:
-		return ha.Name, nil
-
-	case SourceRawRequestBody:
-		return string(r.Body), nil
-
-	case SourceRequest:
-		if r == nil || r.RawRequest == nil {
-			return "", errors.New("request is nil")
-		}
-
-		switch strings.ToLower(ha.Name) {
-		case "remote-addr":
-			return r.RawRequest.RemoteAddr, nil
-		case "method":
-			return r.RawRequest.Method, nil
-		default:
-			return "", fmt.Errorf("unsupported request key: %q", ha.Name)
-		}
-
-	case SourceEntirePayload:
-		res, err := json.Marshal(&r.Payload)
-		if err != nil {
-			return "", err
-		}
-
-		return string(res), nil
-
-	case SourceEntireHeaders:
-		res, err := json.Marshal(&r.Headers)
-		if err != nil {
-			return "", err
-		}
-
-		return string(res), nil
-
-	case SourceEntireQuery:
-		res, err := json.Marshal(&r.Query)
-		if err != nil {
-			return "", err
-		}
-
-		return string(res), nil
-	}
-
-	if source != nil {
-		return ExtractParameterAsString(key, *source)
-	}
-
-	return "", errors.New("no source for value retrieval")
 }
 
 // Header is a structure containing header name and it's value
@@ -544,23 +298,6 @@ func (h *ResponseHeaders) Set(value string) error {
 	return nil
 }
 
-// HooksFiles is a slice of String
-type HooksFiles []string
-
-func (h *HooksFiles) String() string {
-	if len(*h) == 0 {
-		return "hooks.json"
-	}
-
-	return strings.Join(*h, ", ")
-}
-
-// Set method appends new string
-func (h *HooksFiles) Set(value string) error {
-	*h = append(*h, value)
-	return nil
-}
-
 // Hook type is a structure containing details for a single hook
 type Hook struct {
 	ID                                  string          `json:"id,omitempty"`
@@ -569,7 +306,7 @@ type Hook struct {
 	ResponseMessage                     string          `json:"response-message,omitempty"`
 	ResponseHeaders                     ResponseHeaders `json:"response-headers,omitempty"`
 	CaptureCommandOutput                bool            `json:"include-command-output-in-response,omitempty"`
-	StreamCommandOutput 				bool 			`json:"stream-command-output,omitempty"`
+	StreamCommandOutput                 bool            `json:"stream-command-output,omitempty"`
 	CaptureCommandOutputOnError         bool            `json:"include-command-output-in-response-on-error,omitempty"`
 	PassEnvironmentToCommand            []Argument      `json:"pass-environment-to-command,omitempty"`
 	PassArgumentsToCommand              []Argument      `json:"pass-arguments-to-command,omitempty"`
@@ -585,13 +322,14 @@ type Hook struct {
 
 // ParseJSONParameters decodes specified arguments to JSON objects and replaces the
 // string with the newly created object
-func (h *Hook) ParseJSONParameters(r *Request) []error {
-	errList := make([]error, 0)
+// todo: move to Request
+func (h *Hook) ParseJSONParameters(r *Request) error {
+	var result *multierror.Error
 
 	for i := range h.JSONStringParameters {
 		arg, err := h.JSONStringParameters[i].Get(r)
 		if err != nil {
-			errList = append(errList, &ArgumentError{h.JSONStringParameters[i]})
+			result = multierror.Append(result, err)
 		} else {
 			var newArg map[string]interface{}
 
@@ -600,7 +338,7 @@ func (h *Hook) ParseJSONParameters(r *Request) []error {
 
 			err := decoder.Decode(&newArg)
 			if err != nil {
-				errList = append(errList, &ParseError{err})
+				result = multierror.Append(result, &ParseError{err})
 				continue
 			}
 
@@ -624,54 +362,43 @@ func (h *Hook) ParseJSONParameters(r *Request) []error {
 
 				ReplaceParameter(key, source, newArg)
 			} else {
-				errList = append(errList, &SourceError{h.JSONStringParameters[i]})
+				result = multierror.Append(result, &SourceError{h.JSONStringParameters[i]})
 			}
 		}
 	}
-
-	if len(errList) > 0 {
-		return errList
-	}
-
-	return nil
+	return result.ErrorOrNil()
 }
 
 // ExtractCommandArguments creates a list of arguments, based on the
 // PassArgumentsToCommand property that is ready to be used with exec.Command()
-func (h *Hook) ExtractCommandArguments(r *Request) ([]string, []error) {
+func (h *Hook) ExtractCommandArguments(r *Request) ([]string, error) {
 	args := make([]string, 0)
-	errList := make([]error, 0)
-
+	var result *multierror.Error
 	args = append(args, h.ExecuteCommand)
 
 	for i := range h.PassArgumentsToCommand {
 		arg, err := h.PassArgumentsToCommand[i].Get(r)
 		if err != nil {
 			args = append(args, "")
-			errList = append(errList, &ArgumentError{h.PassArgumentsToCommand[i]})
+			result = multierror.Append(result, err)
 			continue
 		}
-
 		args = append(args, arg)
 	}
 
-	if len(errList) > 0 {
-		return args, errList
-	}
-
-	return args, nil
+	return args, result.ErrorOrNil()
 }
 
 // ExtractCommandArgumentsForEnv creates a list of arguments in key=value
 // format, based on the PassEnvironmentToCommand property that is ready to be used
 // with exec.Command().
-func (h *Hook) ExtractCommandArgumentsForEnv(r *Request) ([]string, []error) {
+func (h *Hook) ExtractCommandArgumentsForEnv(r *Request) ([]string, error) {
 	args := make([]string, 0)
-	errList := make([]error, 0)
+	var result *multierror.Error
 	for i := range h.PassEnvironmentToCommand {
 		arg, err := h.PassEnvironmentToCommand[i].Get(r)
 		if err != nil {
-			errList = append(errList, &ArgumentError{h.PassEnvironmentToCommand[i]})
+			result = multierror.Append(result, err)
 			continue
 		}
 
@@ -684,11 +411,7 @@ func (h *Hook) ExtractCommandArgumentsForEnv(r *Request) ([]string, []error) {
 		}
 	}
 
-	if len(errList) > 0 {
-		return args, errList
-	}
-
-	return args, nil
+	return args, result.ErrorOrNil()
 }
 
 // FileParameter describes a pass-file-to-command instance to be stored as file
@@ -701,19 +424,20 @@ type FileParameter struct {
 // ExtractCommandArgumentsForFile creates a list of arguments in key=value
 // format, based on the PassFileToCommand property that is ready to be used
 // with exec.Command().
-func (h *Hook) ExtractCommandArgumentsForFile(r *Request) ([]FileParameter, []error) {
+func (h *Hook) ExtractCommandArgumentsForFile(r *Request) ([]FileParameter, error) {
 	args := make([]FileParameter, 0)
-	errList := make([]error, 0)
+	var result *multierror.Error
 	for i := range h.PassFileToCommand {
 		arg, err := h.PassFileToCommand[i].Get(r)
 		if err != nil {
-			errList = append(errList, &ArgumentError{h.PassFileToCommand[i]})
+			result = multierror.Append(result, &ArgumentError{h.PassFileToCommand[i], err})
 			continue
 		}
 
 		if h.PassFileToCommand[i].EnvName == "" {
 			// if no environment-variable name is set, fall-back on the name
-			log.Printf("no ENVVAR name specified, falling back to [%s]", EnvNamespace+strings.ToUpper(h.PassFileToCommand[i].Name))
+			slog.Debug("no ENVVAR name specified, using fallback",
+				"fallback", EnvNamespace+strings.ToUpper(h.PassFileToCommand[i].Name))
 			h.PassFileToCommand[i].EnvName = EnvNamespace + strings.ToUpper(h.PassFileToCommand[i].Name)
 		}
 
@@ -721,7 +445,9 @@ func (h *Hook) ExtractCommandArgumentsForFile(r *Request) ([]FileParameter, []er
 		if h.PassFileToCommand[i].Base64Decode {
 			dec, err := base64.StdEncoding.DecodeString(arg)
 			if err != nil {
-				log.Printf("error decoding string [%s]", err)
+				slog.Error("error decoding base64 while extracting argument to file",
+					"argument_name", h.PassFileToCommand[i].Name,
+					"error", err)
 			}
 			fileContent = []byte(dec)
 		} else {
@@ -731,226 +457,5 @@ func (h *Hook) ExtractCommandArgumentsForFile(r *Request) ([]FileParameter, []er
 		args = append(args, FileParameter{EnvName: h.PassFileToCommand[i].EnvName, Data: fileContent})
 	}
 
-	if len(errList) > 0 {
-		return args, errList
-	}
-
-	return args, nil
-}
-
-// Hooks is an array of Hook objects
-type Hooks []Hook
-
-// LoadFromFile attempts to load hooks from the specified file, which
-// can be either JSON or YAML.  The asTemplate parameter causes the file
-// contents to be parsed as a Go text/template prior to unmarshalling.
-func (h *Hooks) LoadFromFile(path string, asTemplate bool) error {
-	if path == "" {
-		return nil
-	}
-
-	// parse hook file for hooks
-	file, e := os.ReadFile(path)
-	if e != nil {
-		return fmt.Errorf("error reading hooks file: [%s]: %w", path, e)
-	}
-
-	if asTemplate {
-		funcMap := template.FuncMap{"getenv": getenv}
-
-		tmpl, err := template.New("hooks").Funcs(funcMap).Parse(string(file))
-		if err != nil {
-			return fmt.Errorf("error parsing hooks file: [%s]: %w", path, err)
-		}
-
-		var buf bytes.Buffer
-		err = tmpl.Execute(&buf, nil)
-		if err != nil {
-			return fmt.Errorf("executing template on file [%s]: %w", path, err)
-		}
-
-		file = buf.Bytes()
-	}
-
-	return yaml.Unmarshal(file, h)
-}
-
-// Append appends hooks unless the new hooks contain a hook with an ID that already exists
-func (h *Hooks) Append(other *Hooks) error {
-	for _, hook := range *other {
-		if h.Match(hook.ID) != nil {
-			return fmt.Errorf("hook with ID %s is already defined", hook.ID)
-		}
-
-		*h = append(*h, hook)
-	}
-
-	return nil
-}
-
-// Match iterates through Hooks and returns first one that matches the given ID,
-// if no hook matches the given ID, nil is returned
-func (h *Hooks) Match(id string) *Hook {
-	for i := range *h {
-		if (*h)[i].ID == id {
-			return &(*h)[i]
-		}
-	}
-
-	return nil
-}
-
-// Rules is a structure that contains one of the valid rule types
-type Rules struct {
-	And   *AndRule   `json:"and,omitempty"`
-	Or    *OrRule    `json:"or,omitempty"`
-	Not   *NotRule   `json:"not,omitempty"`
-	Match *MatchRule `json:"match,omitempty"`
-}
-
-// Evaluate finds the first rule property that is not nil and returns the value
-// it evaluates to
-func (r Rules) Evaluate(req *Request) (bool, error) {
-	switch {
-	case r.And != nil:
-		return r.And.Evaluate(req)
-	case r.Or != nil:
-		return r.Or.Evaluate(req)
-	case r.Not != nil:
-		return r.Not.Evaluate(req)
-	case r.Match != nil:
-		return r.Match.Evaluate(req)
-	}
-
-	return false, nil
-}
-
-// AndRule will evaluate to true if and only if all of the ChildRules evaluate to true
-type AndRule []Rules
-
-// Evaluate AndRule will return true if and only if all of ChildRules evaluate to true
-func (r AndRule) Evaluate(req *Request) (bool, error) {
-	res := true
-
-	for _, v := range r {
-		rv, err := v.Evaluate(req)
-		if err != nil {
-			return false, err
-		}
-
-		res = res && rv
-		if !res {
-			return res, nil
-		}
-	}
-
-	return res, nil
-}
-
-// OrRule will evaluate to true if any of the ChildRules evaluate to true
-type OrRule []Rules
-
-// Evaluate OrRule will return true if any of ChildRules evaluate to true
-func (r OrRule) Evaluate(req *Request) (bool, error) {
-	res := false
-
-	for _, v := range r {
-		rv, err := v.Evaluate(req)
-		if err != nil {
-			if !IsParameterNodeError(err) {
-				if !req.AllowSignatureErrors || (req.AllowSignatureErrors && !IsSignatureError(err)) {
-					return false, err
-				}
-			}
-		}
-
-		res = res || rv
-		if res {
-			return res, nil
-		}
-	}
-
-	return res, nil
-}
-
-// NotRule will evaluate to true if any and only if the ChildRule evaluates to false
-type NotRule Rules
-
-// Evaluate NotRule will return true if and only if ChildRule evaluates to false
-func (r NotRule) Evaluate(req *Request) (bool, error) {
-	rv, err := Rules(r).Evaluate(req)
-	return !rv, err
-}
-
-// MatchRule will evaluate to true based on the type
-type MatchRule struct {
-	Type      string   `json:"type,omitempty"`
-	Regex     string   `json:"regex,omitempty"`
-	Secret    string   `json:"secret,omitempty"`
-	Value     string   `json:"value,omitempty"`
-	Parameter Argument `json:"parameter,omitempty"`
-	IPRange   string   `json:"ip-range,omitempty"`
-}
-
-// Constants for the MatchRule type
-const (
-	MatchValue      string = "value"
-	MatchRegex      string = "regex"
-	MatchHMACSHA1   string = "payload-hmac-sha1"
-	MatchHMACSHA256 string = "payload-hmac-sha256"
-	MatchHMACSHA512 string = "payload-hmac-sha512"
-	MatchHashSHA1   string = "payload-hash-sha1"
-	MatchHashSHA256 string = "payload-hash-sha256"
-	MatchHashSHA512 string = "payload-hash-sha512"
-	IPWhitelist     string = "ip-whitelist"
-	ScalrSignature  string = "scalr-signature"
-)
-
-// Evaluate MatchRule will return based on the type
-func (r MatchRule) Evaluate(req *Request) (bool, error) {
-	if r.Type == IPWhitelist {
-		return CheckIPWhitelist(req.RawRequest.RemoteAddr, r.IPRange)
-	}
-	if r.Type == ScalrSignature {
-		return CheckScalrSignature(req, r.Secret, true)
-	}
-
-	arg, err := r.Parameter.Get(req)
-	if err == nil {
-		switch r.Type {
-		case MatchValue:
-			return compare(arg, r.Value), nil
-		case MatchRegex:
-			return regexp.MatchString(r.Regex, arg)
-		case MatchHashSHA1:
-			log.Print(`warn: use of deprecated option payload-hash-sha1; use payload-hmac-sha1 instead`)
-			fallthrough
-		case MatchHMACSHA1:
-			_, err := CheckPayloadSignature(req.Body, r.Secret, arg)
-			return err == nil, err
-		case MatchHashSHA256:
-			log.Print(`warn: use of deprecated option payload-hash-sha256: use payload-hmac-sha256 instead`)
-			fallthrough
-		case MatchHMACSHA256:
-			_, err := CheckPayloadSignature256(req.Body, r.Secret, arg)
-			return err == nil, err
-		case MatchHashSHA512:
-			log.Print(`warn: use of deprecated option payload-hash-sha512: use payload-hmac-sha512 instead`)
-			fallthrough
-		case MatchHMACSHA512:
-			_, err := CheckPayloadSignature512(req.Body, r.Secret, arg)
-			return err == nil, err
-		}
-	}
-	return false, err
-}
-
-// compare is a helper function for constant time string comparisons.
-func compare(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
-
-// getenv provides a template function to retrieve OS environment variables.
-func getenv(s string) string {
-	return os.Getenv(s)
+	return args, result.ErrorOrNil()
 }

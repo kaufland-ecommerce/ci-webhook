@@ -2,7 +2,6 @@ package hook
 
 import (
 	"net/http"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -455,77 +454,6 @@ func TestHookExtractCommandArgumentsForEnv(t *testing.T) {
 	}
 }
 
-var hooksLoadFromFileTests = []struct {
-	path       string
-	asTemplate bool
-	ok         bool
-}{
-	{"../../hooks.json.example", false, true},
-	{"../../hooks.yaml.example", false, true},
-	{"../../hooks.json.tmpl.example", true, true},
-	{"../../hooks.yaml.tmpl.example", true, true},
-	{"", false, true},
-	// failures
-	{"missing.json", false, false},
-}
-
-func TestHooksLoadFromFile(t *testing.T) {
-	secret := `foo"123`
-	_ = os.Setenv("XXXTEST_SECRET", secret)
-
-	for _, tt := range hooksLoadFromFileTests {
-		t.Run(tt.path, func(t *testing.T) {
-			h := &Hooks{}
-			err := h.LoadFromFile(tt.path, tt.asTemplate)
-			if (err == nil) != tt.ok {
-				t.Errorf(err.Error())
-			}
-		})
-	}
-}
-
-func TestHooksTemplateLoadFromFile(t *testing.T) {
-	secret := `foo"123`
-	_ = os.Setenv("XXXTEST_SECRET", secret)
-
-	for _, tt := range hooksLoadFromFileTests {
-		if !tt.asTemplate {
-			continue
-		}
-		t.Run(tt.path, func(t *testing.T) {
-			h := &Hooks{}
-			err := h.LoadFromFile(tt.path, tt.asTemplate)
-			if (err == nil) != tt.ok {
-				t.Errorf(err.Error())
-				return
-			}
-
-			s := (*h.Match("webhook").TriggerRule.And)[0].Match.Secret
-			if s != secret {
-				t.Errorf("Expected secret of %q, got %q", secret, s)
-			}
-		})
-	}
-}
-
-var hooksMatchTests = []struct {
-	id    string
-	hooks Hooks
-	value *Hook
-}{
-	{"a", Hooks{Hook{ID: "a"}}, &Hook{ID: "a"}},
-	{"X", Hooks{Hook{ID: "a"}}, new(Hook)},
-}
-
-func TestHooksMatch(t *testing.T) {
-	for _, tt := range hooksMatchTests {
-		value := tt.hooks.Match(tt.id)
-		if reflect.DeepEqual(reflect.ValueOf(value), reflect.ValueOf(tt.value)) {
-			t.Errorf("failed to match %q:\nexpected %#v,\ngot %#v", tt.id, tt.value, value)
-		}
-	}
-}
-
 var matchRuleTests = []struct {
 	typ, regex, secret, value, ipRange string
 	param                              Argument
@@ -719,16 +647,18 @@ var orRuleTests = []struct {
 
 func TestOrRule(t *testing.T) {
 	for _, tt := range orRuleTests {
-		r := &Request{
-			Headers: tt.headers,
-			Query:   tt.query,
-			Payload: tt.payload,
-			Body:    tt.body,
-		}
-		ok, err := tt.rule.Evaluate(r)
-		if ok != tt.ok || (err != nil) != tt.err {
-			t.Errorf("%#v:\nexpected ok: %#v, err: %v\ngot ok: %#v err: %v", tt.desc, tt.ok, tt.err, ok, err)
-		}
+		t.Run(tt.desc, func(t *testing.T) {
+			r := &Request{
+				Headers: tt.headers,
+				Query:   tt.query,
+				Payload: tt.payload,
+				Body:    tt.body,
+			}
+			ok, err := tt.rule.Evaluate(r)
+			if ok != tt.ok || (err != nil) != tt.err {
+				t.Errorf("expected ok: %#v, err: %v\ngot ok: %#v err: %v", tt.ok, tt.err, ok, err)
+			}
+		})
 	}
 }
 

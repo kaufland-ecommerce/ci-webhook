@@ -46,7 +46,7 @@ func Dumper(w io.Writer) func(http.Handler) http.Handler {
 				buf.WriteString(sc.Text() + "\n")
 			}
 
-			w.Write(buf.Bytes())
+			_, _ = w.Write(buf.Bytes())
 			buf.Reset()
 
 			// Dump Response
@@ -79,7 +79,7 @@ func Dumper(w io.Writer) func(http.Handler) http.Handler {
 					buf.WriteString(sc.Text() + "\n")
 				}
 			}
-			w.Write(buf.Bytes())
+			_, _ = w.Write(buf.Bytes())
 		})
 	}
 }
@@ -102,4 +102,11 @@ func (r *responseDupper) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return hijacker.Hijack()
 	}
 	return nil, nil, fmt.Errorf("dumper middleware: inner ResponseWriter cannot be hijacked: %T", r.ResponseWriter)
+}
+
+// Flush supports the http.Flusher interface.
+func (r *responseDupper) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }

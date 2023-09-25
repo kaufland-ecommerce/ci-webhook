@@ -1,52 +1,49 @@
-// +build !windows
+//go:build !windows
 
 package main
 
 import (
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 )
 
-func setupSignals() {
-	log.Printf("setting up os signal watcher\n")
+func setupSignals(notifyReload func()) {
+	slog.Info("setting up os signal watcher")
+	signals := make(chan os.Signal, 1)
 
-	signals = make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGUSR1)
-	signal.Notify(signals, syscall.SIGHUP)
-	signal.Notify(signals, syscall.SIGTERM)
-	signal.Notify(signals, os.Interrupt)
+	signal.Notify(
+		signals,
+		syscall.SIGUSR1,
+		syscall.SIGHUP,
+		syscall.SIGTERM,
+		os.Interrupt,
+	)
 
-	go watchForSignals()
-}
-
-func watchForSignals() {
-	log.Println("os signal watcher ready")
-
-	for {
-		sig := <-signals
-		switch sig {
-		case syscall.SIGUSR1:
-			log.Println("caught USR1 signal")
-			reloadAllHooks()
-
-		case syscall.SIGHUP:
-			log.Println("caught HUP signal")
-			reloadAllHooks()
-
-		case os.Interrupt, syscall.SIGTERM:
-			log.Printf("caught %s signal; exiting\n", sig)
-			if pidFile != nil {
-				err := pidFile.Remove()
-				if err != nil {
-					log.Print(err)
+	go func() {
+		slog.Info("os signal watcher ready")
+		for {
+			sig := <-signals
+			switch sig {
+			case syscall.SIGUSR1, syscall.SIGHUP:
+				slog.Warn("caught signal", "signal", sig)
+				notifyReload()
+			case os.Interrupt, syscall.SIGTERM:
+				log.Printf("caught %s signal; exiting\n", sig)
+				slog.Warn("caught signal", "signal", sig)
+				// todo: do proper shutdown, by notifying main loop, and remove this
+				if pidFile != nil {
+					err := pidFile.Remove()
+					if err != nil {
+						log.Print(err)
+					}
 				}
+				os.Exit(0)
+			default:
+				log.Printf("caught unhandled signal %+v\n", sig)
 			}
-			os.Exit(0)
-
-		default:
-			log.Printf("caught unhandled signal %+v\n", sig)
 		}
-	}
+	}()
 }

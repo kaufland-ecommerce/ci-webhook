@@ -1,6 +1,7 @@
 .idea
 .cover
 coverage
-webhook
+/webhook
+/ci-webhook
 /test/hookecho
 build
