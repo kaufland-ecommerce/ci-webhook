@@ -4,7 +4,6 @@ go 1.21
 
 require (
 	github.com/clbanning/mxj v1.8.4
-	github.com/dustin/go-humanize v1.0.1
 	github.com/fsnotify/fsnotify v1.6.0
 	github.com/ghodss/yaml v1.0.0
 	github.com/go-chi/chi/v5 v5.0.10
