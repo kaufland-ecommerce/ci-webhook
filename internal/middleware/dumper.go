@@ -46,7 +46,7 @@ func Dumper(w io.Writer) func(http.Handler) http.Handler {
 				buf.WriteString(sc.Text() + "\n")
 			}
 
-			w.Write(buf.Bytes())
+			_, _ = w.Write(buf.Bytes())
 			buf.Reset()
 
 			// Dump Response
@@ -79,7 +79,7 @@ func Dumper(w io.Writer) func(http.Handler) http.Handler {
 					buf.WriteString(sc.Text() + "\n")
 				}
 			}
-			w.Write(buf.Bytes())
+			_, _ = w.Write(buf.Bytes())
 		})
 	}
 }
