@@ -1147,7 +1147,7 @@ env: HOOK_head_commit.timestamp=2013-03-12T08:14:29-07:00
 `, ``},
 
 	// Check logs
-	{"static params should pass", "static-params-ok", nil, "POST", nil, "application/json", `{}`, false, http.StatusOK, "arg: passed\n", `(?s)command output: arg: passed`},
+	{"static params should pass", "static-params-ok", nil, "POST", nil, "application/json", `{}`, false, http.StatusOK, "arg: passed\n", `(?s)exec.output="arg: passed`},
 	{"command with space logs warning", "warn-on-space", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, "Error occurred while executing the hook's command. Please check logs for more details.", `(?s)WARN.*use 'pass[-]arguments[-]to[-]command' to specify args`},
 	{"unsupported content type error", "github", nil, "POST", map[string]string{"Content-Type": "nonexistent/format"}, "application/json", `{}`, false, http.StatusBadRequest, `Hook rules were not satisfied.`, `(?s)unsupported content type, skip parsing body payload`},
 }

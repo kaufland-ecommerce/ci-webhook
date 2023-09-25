@@ -57,8 +57,10 @@ func (e *Executor) prepareFileArguments() ([]string, error) {
 	var result *multierror.Error
 
 	files, err := e.hook.ExtractCommandArgumentsForFile(e.req)
-	result = multierror.Append(result, err)
-	e.logger.Error("error extracting command arguments for file", "error", err)
+	if err != nil {
+		result = multierror.Append(result, err)
+		e.logger.Error("error extracting command arguments for file", "error", err)
+	}
 	var envs []string
 	for i := range files {
 		tmpfile, err := os.CreateTemp(e.hook.CommandWorkingDirectory, files[i].EnvName)
@@ -109,22 +111,24 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 	// arguments
 	cmd.Args, err = e.hook.ExtractCommandArguments(e.req)
 	if err != nil {
-		e.logger.Error("error extracting command arguments", "error", err)
+		e.logger.Warn("error extracting command arguments", "error", err)
 	}
 	// environment variables
 	var envs []string
 	envs, err = e.hook.ExtractCommandArgumentsForEnv(e.req)
-	e.logger.Error("error extracting command arguments for environment", "error", err)
+	if err != nil {
+		e.logger.Warn("error extracting command arguments for environment", "error", err)
+	}
 	// file-based environment variables
 	envFileArgs, err := e.prepareFileArguments()
 	defer e.cleanupFileArguments()
 	if err != nil {
-		e.logger.Error("error preparing file arguments", "error", err)
+		e.logger.Warn("error preparing file arguments", "error", err)
 	}
 	envs = append(envs, envFileArgs...)
 	// set all on command
 	cmd.Env = append(os.Environ(), envs...)
-	e.logger.Info("executing command",
+	e.logger.WithGroup("exec").Info("executing command",
 		"command", cmd.Path,
 		"arguments", cmd.Args,
 		// log only envs set by webhook, not global env; otherwise it's leaking secrets to logs
@@ -144,7 +148,6 @@ func (e *Executor) Execute(w io.Writer) error {
 	if err != nil {
 		e.logger.Error("error executing hook's command", "error", err)
 	}
-	e.logger.Info("command output: " + commandOutputBuf.String())
-	e.logger.Info("finished handling")
+	e.logger.Info("finished handling", "exec.output", commandOutputBuf.String())
 	return err
 }

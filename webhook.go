@@ -186,7 +186,7 @@ func main() {
 		middleware.UseXRequestIDHeaderOption(*useXRequestID),
 		middleware.XRequestIDLimitOption(*xRequestIDLimit),
 	))
-	r.Use(middleware.NewLogger())
+	r.Use(chimiddleware.RequestLogger(middleware.NewLogFormatter(logger.With("logger", "http"))))
 	r.Use(chimiddleware.Recoverer)
 
 	if *debug {

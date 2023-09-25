@@ -1,59 +1,54 @@
 package middleware
 
 import (
-	"bytes"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/dustin/go-humanize"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// Logger is a middleware that logs useful data about each HTTP request.
-type Logger struct {
-	Logger middleware.LoggerInterface
+type LogFormatter func(r *http.Request) middleware.LogEntry
+
+func (l LogFormatter) NewLogEntry(r *http.Request) middleware.LogEntry {
+	return l(r)
 }
 
-// NewLogger creates a new RequestLogger Handler.
-func NewLogger() func(next http.Handler) http.Handler {
-	return middleware.RequestLogger(&Logger{})
-}
-
-// NewLogEntry creates a new LogEntry for the request.
-func (l *Logger) NewLogEntry(r *http.Request) middleware.LogEntry {
-	e := &LogEntry{
-		req: r,
-		buf: &bytes.Buffer{},
-	}
-
-	return e
+func NewLogFormatter(logger *slog.Logger) middleware.LogFormatter {
+	return LogFormatter(func(r *http.Request) middleware.LogEntry {
+		return &LogEntry{
+			req:    r,
+			logger: logger,
+		}
+	})
 }
 
 // LogEntry represents an individual log entry.
 type LogEntry struct {
-	*Logger
-	req *http.Request
-	buf *bytes.Buffer
+	req    *http.Request
+	logger *slog.Logger
 }
 
 // Write constructs and writes the final log entry.
 func (l *LogEntry) Write(status, totalBytes int, _ http.Header, elapsed time.Duration, _ any) {
 	rid := GetReqID(l.req.Context())
-	if rid != "" {
-		_, _ = fmt.Fprintf(l.buf, "[%s] ", rid)
-	}
-
-	_, _ = fmt.Fprintf(l.buf, "%03d | %s | %s | ", status, humanize.IBytes(uint64(totalBytes)), elapsed)
-	l.buf.WriteString(l.req.Host + " | " + l.req.Method + " " + l.req.RequestURI)
-	log.Print(l.buf.String())
+	l.logger.LogAttrs(nil, slog.LevelInfo, "handled",
+		slog.String("http.request_id", rid),
+		slog.String("http.method", l.req.Method),
+		slog.String("http.url", l.req.RequestURI),
+		slog.String("http.url_details.host", l.req.Host),
+		slog.Int("http.status", status),
+		slog.Duration("http.duration", elapsed),
+		slog.Int("network.bytes_written", totalBytes),
+	)
 }
 
 // Panic prints the call stack for a panic.
 func (l *LogEntry) Panic(v interface{}, stack []byte) {
-	e := l.NewLogEntry(l.req).(*LogEntry)
-	_, _ = fmt.Fprintf(e.buf, "panic: %#v", v)
-	log.Print(e.buf.String())
-	log.Print(string(stack))
+	l.logger.LogAttrs(nil, slog.LevelError, "request caused panic",
+		slog.String("error.kind", "panic"),
+		slog.String("error.message", fmt.Sprintf("%#v", v)),
+		slog.String("error.stack", string(stack)),
+	)
 }

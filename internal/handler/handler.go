@@ -48,7 +48,7 @@ func (r *RequestHandler) ServeHTTP(w http.ResponseWriter, request *http.Request)
 		ID:         middleware.GetReqID(request.Context()),
 		RawRequest: request,
 	}
-	requestLog := r.logger.With("request_id", hookRequest.ID)
+	requestLog := r.logger.With("http.request_id", hookRequest.ID)
 	requestLog.Info(
 		"incoming HTTP request",
 		"method", request.Method,
