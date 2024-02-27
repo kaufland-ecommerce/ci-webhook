@@ -8,8 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -146,6 +144,8 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 	cmd.Stdout = w
 	// handling the timeout
 	if timeout > 0 {
+		// sets the same PGID for the child processes
+		setPGID(cmd)
 		terminationTimer := e.stopProcessWithTimeout(cmd, timeout)
 		err := cmd.Run()
 		// stop timer if command had finished before the timeout reached
@@ -155,47 +155,20 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 	return cmd.Run()
 }
 
-// sendKillSignal sends terminate/kill signal to the process depending on runtime OS
-func (e *Executor) sendKillSignal(pid int, signal syscall.Signal, currentOS string) error {
-	var err error
-
-	if currentOS == "windows" {
-		if signal == syscall.SIGTERM {
-			err = exec.Command("TASKKILL", "/T", "/PID", strconv.Itoa(pid)).Run()
-		} else {
-			err = exec.Command("TASKKILL", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
-		}
-	} else {
-		err = syscall.Kill(-pid, signal)
-	}
-	if err != nil {
-		e.logger.Error("Error during handling terminate/kill signal", "signal", signal.String(), "error", err)
-	}
-
-	return err
-}
-
 // stopProcessWithTimeout handles termination of the process with configurable timeout
 func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) *time.Timer {
 	e.logger.Info("Setting up timeout for current operation", "timeout", timeout)
-
-	currentOS := runtime.GOOS
-	preSIGKILLtimeout := time.Second * time.Duration(10)
-	// sets the same PGID for the child processes
-	if currentOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
 
 	return time.AfterFunc(timeout, func() {
 
 		e.logger.Info("Sending SIGTERM because timeout has reached", "timeout", timeout)
 		// attempting to terminate the process with pre-configured timeout
-		if err := e.sendKillSignal(cmd.Process.Pid, syscall.SIGTERM, currentOS); err != nil {
+		if err := sendKillSignal(e, cmd.Process.Pid, syscall.SIGTERM); err != nil {
 			e.logger.Warn("Failed to send SIGTERM, trying SIGKILL instead", "error", err)
 		}
 		// attempting to kill the process with additional timeout on top
-		killingTimer := time.AfterFunc(preSIGKILLtimeout, func() {
-			if err := e.sendKillSignal(cmd.Process.Pid, syscall.SIGKILL, currentOS); err != nil {
+		killingTimer := time.AfterFunc(time.Second*time.Duration(10), func() {
+			if err := sendKillSignal(e, cmd.Process.Pid, syscall.SIGKILL); err != nil {
 				e.logger.Error("Failed to send SIGKILL", "error", err)
 			}
 		})
