@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/go-multierror"
 )
@@ -318,6 +319,7 @@ type Hook struct {
 	IncomingPayloadContentType          string          `json:"incoming-payload-content-type,omitempty"`
 	SuccessHttpResponseCode             int             `json:"success-http-response-code,omitempty"`
 	HTTPMethods                         []string        `json:"http-methods"`
+	Timeout                             time.Duration   `json:"timeout,omitempty"`
 }
 
 // ParseJSONParameters decodes specified arguments to JSON objects and replaces the

@@ -8,7 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/hashicorp/go-multierror"
 
@@ -105,6 +109,8 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// retrieve timeout value
+	timeout := e.hook.Timeout * time.Second
 	// construct command
 	cmd := exec.Command(cmdPath)
 	cmd.Dir = e.hook.CommandWorkingDirectory
@@ -134,11 +140,72 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 		// log only envs set by webhook, not global env; otherwise it's leaking secrets to logs
 		"environment", envs,
 		"working_directory", cmd.Dir,
+		"timeout", timeout,
 	)
 	cmd.Stderr = w
 	cmd.Stdout = w
-
+	// handling the timeout
+	if timeout > 0 {
+		terminationTimer := e.stopProcessWithTimeout(cmd, timeout)
+		err := cmd.Run()
+		// stop timer if command had finished before the timeout reached
+		terminationTimer.Stop()
+		return err
+	}
 	return cmd.Run()
+}
+
+// sendKillSignal sends terminate/kill signal to the process depending on runtime OS
+func (e *Executor) sendKillSignal(pid int, signal syscall.Signal, currentOS string) error {
+	var err error
+
+	if currentOS == "windows" {
+		if signal == syscall.SIGTERM {
+			err = exec.Command("TASKKILL", "/T", "/PID", strconv.Itoa(pid)).Run()
+		} else {
+			err = exec.Command("TASKKILL", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
+		}
+	} else {
+		err = syscall.Kill(-pid, signal)
+	}
+	if err != nil {
+		e.logger.Error("Error during handling terminate/kill signal", "signal", signal.String(), "error", err)
+	}
+
+	return err
+}
+
+// stopProcessWithTimeout handles termination of the process with configurable timeout
+func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) *time.Timer {
+	e.logger.Info("Setting up timeout for current operation", "timeout", timeout)
+
+	currentOS := runtime.GOOS
+	preSIGKILLtimeout := time.Second * time.Duration(10)
+	// sets the same PGID for the child processes
+	if currentOS != "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+
+	return time.AfterFunc(timeout, func() {
+
+		e.logger.Info("Sending SIGTERM because timeout has reached", "timeout", timeout)
+		// attempting to terminate the process with pre-configured timeout
+		if err := e.sendKillSignal(cmd.Process.Pid, syscall.SIGTERM, currentOS); err != nil {
+			e.logger.Warn("Failed to send SIGTERM, trying SIGKILL instead", "error", err)
+		}
+		// attempting to kill the process with additional timeout on top
+		killingTimer := time.AfterFunc(preSIGKILLtimeout, func() {
+			if err := e.sendKillSignal(cmd.Process.Pid, syscall.SIGKILL, currentOS); err != nil {
+				e.logger.Error("Failed to send SIGKILL", "error", err)
+			}
+		})
+		// waiting for the process being exited
+		if processState, err := cmd.Process.Wait(); err != nil && processState != nil {
+			e.logger.Error("Error during process exiting", "error", err)
+		}
+		// stop the timer if process had terminated before timer reached
+		killingTimer.Stop()
+	})
 }
 
 func (e *Executor) Execute(w io.Writer) error {
