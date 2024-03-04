@@ -147,14 +147,8 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 		// sets the same PGID for the child processes
 		setPGID(cmd)
 		terminationTimer := e.stopProcessWithTimeout(cmd, timeout)
-		defer func(t *time.Timer) {
-			// stop timer if command had finished before the timeout reached
-			t.Stop()
-			select {
-			case <-t.C:
-			default:
-			}
-		}(terminationTimer)
+        // stop the timer if process had terminated before timer reached
+		defer terminationTimer.Stop()
 	}
 	return cmd.Run()
 }
@@ -176,14 +170,8 @@ func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) 
 				e.logger.Error("failed to send SIGKILL", "error", err)
 			}
 		})
-		defer func(t *time.Timer) {
-			// stop the timer if process had terminated before timer reached
-			t.Stop()
-			select {
-			case <-t.C:
-			default:
-			}
-		}(killingTimer)
+                // stop the timer if process had terminated before timer reached
+		defer killingTimer.Stop()
 		// waiting for the process being exited
 		if processState, err := cmd.Process.Wait(); err != nil && processState != nil {
 			e.logger.Error("error during process exiting", "error", err)
