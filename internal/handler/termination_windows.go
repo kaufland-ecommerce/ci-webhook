@@ -13,7 +13,7 @@ func sendKillSignal(executor *Executor, pid int, signal syscall.Signal) error {
 	var err error
 
 	if signal == syscall.SIGTERM {
-		err = exec.Command("TASKKILL", "/T", "/PID", strconv.Itoa(pid)).Run()
+		err = exec.Command("TASKKILL", "/PID", strconv.Itoa(pid)).Run()
 	} else {
 		err = exec.Command("TASKKILL", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
 	}
