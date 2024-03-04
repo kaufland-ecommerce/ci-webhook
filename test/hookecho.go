@@ -46,7 +46,7 @@ func main() {
 		if exitCode != "" {
 			code, err := strconv.Atoi(exitCode)
 			if err != nil {
-				fmt.Printf("Exit code %s not an int!", code)
+				fmt.Printf("Exit code %s not an int!", exitCode)
 				os.Exit(-1)
 			}
 			os.Exit(code)
