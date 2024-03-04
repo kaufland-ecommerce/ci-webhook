@@ -556,26 +556,27 @@
     }
   },
   {
-    "id": "hook-with-timeout",
-    "execute-command": "./test/test.sh",
-    "command-working-directory": ".",
-    "success-http-response-code": 200,
-    "incoming-payload-content-type": "application/json",
-    "http-methods": [
-      "Post "
-    ],
+    "id": "success-with-timeout",
+    "execute-command": "{{ .Hookecho }}",
     "include-command-output-in-response": true,
     "include-command-output-in-response-on-error": true,
-    "pass-environment-to-command": [
+    "pass-arguments-to-command": [
       {
-        "source": "payload",
-        "name": "exit.code",
-        "envname": "TEST_EXIT_CODE"
-      },
+        "source": "string",
+        "name": "sleep=2s"
+      }
+    ],
+    "timeout": "3s"
+  },
+  {
+    "id": "terminate-with-timeout",
+    "execute-command": "{{ .Hookecho }}",
+    "include-command-output-in-response": true,
+    "include-command-output-in-response-on-error": true,
+    "pass-arguments-to-command": [
       {
-        "source": "payload",
-        "name": "sleep.time",
-        "envname": "TEST_SLEEP"
+        "source": "string",
+        "name": "sleep=4s"
       }
     ],
     "timeout": "3s"

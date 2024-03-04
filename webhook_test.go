@@ -1127,36 +1127,6 @@ env: HOOK_head_commit.timestamp=2013-03-12T08:14:29-07:00
 		``,
 	},
 
-	{
-		"successful-execution-with-timeout",
-		"hook-with-timeout",
-		nil,
-		"POST",
-		nil,
-		"application/json",
-		`{"exit.code": 0, "sleep.time": 2}`,
-		false,
-		http.StatusOK,
-		`THIS IS OUTPUT FROM TEST SCRIPT
-Sleeping for 2 seconds`,
-		``,
-	},
-
-	{
-		"termination-with-timeout",
-		"hook-with-timeout",
-		nil,
-		"POST",
-		nil,
-		"application/json",
-		`{"exit.code": 0, "sleep.time": 4}`,
-		false,
-		http.StatusInternalServerError,
-		`THIS IS OUTPUT FROM TEST SCRIPT
-Sleeping for 4 seconds`,
-		``,
-	},
-
 	// test with disallowed global HTTP method
 	{"global disallowed method", "bitbucket", []string{"Post "}, "GET", nil, `{}`, "application/json", false, http.StatusMethodNotAllowed, ``, ``},
 	// test with disallowed HTTP method
@@ -1175,6 +1145,10 @@ Sleeping for 4 seconds`,
 	{"don't capture output on error by default", "capture-command-output-on-error-not-by-default", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, `Error occurred while executing the hook's command. Please check logs for more details.`, ``},
 	{"capture output on error with extra flag set", "capture-command-output-on-error-yes-with-extra-flag", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, `arg: exit=1
 `, ``},
+
+	// test timeout handling
+	{"successful execution before timeout", "success-with-timeout", nil, "POST", nil, "application/json", `{}`, false, http.StatusOK, `arg: sleep=2s`, ``},
+	{"termination after timeout", "terminate-with-timeout", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, `arg: sleep=4s`, ``},
 
 	// Check logs
 	{"static params should pass", "static-params-ok", nil, "POST", nil, "application/json", `{}`, false, http.StatusOK, "arg: passed\n", `(?s)exec.output="arg: passed`},
