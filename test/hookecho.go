@@ -7,8 +7,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
+// TODO worth refactoring since the function is very straightforward in the way it works with OS arguments
 func main() {
 	if len(os.Args) > 1 {
 		fmt.Printf("arg: %s\n", strings.Join(os.Args[1:], " "))
@@ -25,13 +27,29 @@ func main() {
 		fmt.Printf("env: %s\n", strings.Join(env, " "))
 	}
 
-	if (len(os.Args) > 1) && (strings.HasPrefix(os.Args[1], "exit=")) {
-		exit_code_str := os.Args[1][5:]
-		exit_code, err := strconv.Atoi(exit_code_str)
-		if err != nil {
-			fmt.Printf("Exit code %s not an int!", exit_code_str)
-			os.Exit(-1)
+	if len(os.Args) > 1 {
+		var exitCode string
+		for _, arg := range os.Args[1:] {
+			if strings.HasPrefix(arg, "sleep=") {
+				timeout, err := time.ParseDuration(arg[6:])
+				if err != nil {
+					fmt.Printf(err.Error())
+					os.Exit(-1)
+				}
+				time.Sleep(timeout)
+			}
+			if strings.HasPrefix(arg, "exit=") {
+				exitCode = arg[5:]
+			}
 		}
-		os.Exit(exit_code)
+
+		if exitCode != "" {
+			code, err := strconv.Atoi(exitCode)
+			if err != nil {
+				fmt.Printf("Exit code %s not an int!", exitCode)
+				os.Exit(-1)
+			}
+			os.Exit(code)
+		}
 	}
 }

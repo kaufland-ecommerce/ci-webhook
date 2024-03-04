@@ -1146,6 +1146,10 @@ env: HOOK_head_commit.timestamp=2013-03-12T08:14:29-07:00
 	{"capture output on error with extra flag set", "capture-command-output-on-error-yes-with-extra-flag", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, `arg: exit=1
 `, ``},
 
+	// test timeout handling
+	{"successful execution before timeout", "success-with-timeout", nil, "POST", nil, "application/json", `{}`, false, http.StatusOK, `arg: sleep=2s`, ``},
+	{"termination after timeout", "terminate-with-timeout", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, `arg: sleep=4s`, ``},
+
 	// Check logs
 	{"static params should pass", "static-params-ok", nil, "POST", nil, "application/json", `{}`, false, http.StatusOK, "arg: passed\n", `(?s)exec.output="arg: passed`},
 	{"command with space logs warning", "warn-on-space", nil, "POST", nil, "application/json", `{}`, false, http.StatusInternalServerError, "Error occurred while executing the hook's command. Please check logs for more details.", `(?s)WARN.*use 'pass[-]arguments[-]to[-]command' to specify args`},

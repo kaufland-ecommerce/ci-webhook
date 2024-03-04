@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/hashicorp/go-multierror"
 
@@ -105,6 +107,8 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// retrieve timeout value
+	timeout := time.Duration(e.hook.Timeout)
 	// construct command
 	cmd := exec.Command(cmdPath)
 	cmd.Dir = e.hook.CommandWorkingDirectory
@@ -134,11 +138,46 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 		// log only envs set by webhook, not global env; otherwise it's leaking secrets to logs
 		"environment", envs,
 		"working_directory", cmd.Dir,
+		"timeout", timeout,
 	)
 	cmd.Stderr = w
 	cmd.Stdout = w
-
+	// handling the timeout
+	if timeout > 0 {
+		// sets the same PGID for the child processes
+		setPGID(cmd)
+		terminationTimer := e.stopProcessWithTimeout(cmd, timeout)
+        // stop the timer if process had terminated before timer reached
+		defer terminationTimer.Stop()
+	}
 	return cmd.Run()
+}
+
+// stopProcessWithTimeout handles termination of the process with configurable timeout
+func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) *time.Timer {
+	e.logger.Info("setting up timeout for current operation", "timeout", timeout)
+
+	return time.AfterFunc(timeout, func() {
+
+		e.logger.Info("sending SIGTERM because timeout has reached", "timeout", timeout)
+		// attempting to terminate the process with pre-configured timeout
+		if err := sendKillSignal(e, cmd.Process.Pid, syscall.SIGTERM); err != nil {
+			e.logger.Warn("failed to send SIGTERM, trying SIGKILL instead", "error", err)
+		}
+		// attempting to kill the process with additional timeout on top
+		killingTimer := time.AfterFunc(time.Second*time.Duration(10), func() {
+			if err := sendKillSignal(e, cmd.Process.Pid, syscall.SIGKILL); err != nil {
+				e.logger.Error("failed to send SIGKILL", "error", err)
+			}
+		})
+        // stop the timer if process had terminated before timer reached
+		defer killingTimer.Stop()
+		// waiting for the process being exited
+		if processState, err := cmd.Process.Wait(); err != nil && processState != nil {
+			e.logger.Error("error during process exiting", "error", err)
+		}
+		e.logger.Info("command has been stopped", "command", cmd.Path)
+	})
 }
 
 func (e *Executor) Execute(w io.Writer) error {

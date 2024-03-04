@@ -337,3 +337,21 @@
       name: drip
       envname: TEST_DRIP
   trigger-rule-mismatch-http-response-code: 400
+
+- id: success-with-timeout
+  execute-command: '{{ .Hookecho }}'
+  include-command-output-in-response: true
+  include-command-output-in-response-on-error: true
+  pass-arguments-to-command:
+  - source: string
+    name: sleep=2s
+  timeout: 3s
+
+- id: terminate-with-timeout
+  execute-command: '{{ .Hookecho }}'
+  include-command-output-in-response: true
+  include-command-output-in-response-on-error: true
+  pass-arguments-to-command:
+  - source: string
+    name: sleep=4s
+  timeout: 3s
