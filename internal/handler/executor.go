@@ -170,7 +170,7 @@ func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) 
 				e.logger.Error("failed to send SIGKILL", "error", err)
 			}
 		})
-                // stop the timer if process had terminated before timer reached
+        // stop the timer if process had terminated before timer reached
 		defer killingTimer.Stop()
 		// waiting for the process being exited
 		if processState, err := cmd.Process.Wait(); err != nil && processState != nil {
