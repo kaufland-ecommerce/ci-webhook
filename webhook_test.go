@@ -1127,6 +1127,36 @@ env: HOOK_head_commit.timestamp=2013-03-12T08:14:29-07:00
 		``,
 	},
 
+	{
+		"successful-execution-with-timeout",
+		"hook-with-timeout",
+		nil,
+		"POST",
+		nil,
+		"application/json",
+		`{"exit.code": 0, "sleep.time": 2}`,
+		false,
+		http.StatusOK,
+		`THIS IS OUTPUT FROM TEST SCRIPT
+Sleeping for 2 seconds`,
+		``,
+	},
+
+	{
+		"termination-with-timeout",
+		"hook-with-timeout",
+		nil,
+		"POST",
+		nil,
+		"application/json",
+		`{"exit.code": 0, "sleep.time": 4}`,
+		false,
+		http.StatusInternalServerError,
+		`THIS IS OUTPUT FROM TEST SCRIPT
+Sleeping for 4 seconds`,
+		``,
+	},
+
 	// test with disallowed global HTTP method
 	{"global disallowed method", "bitbucket", []string{"Post "}, "GET", nil, `{}`, "application/json", false, http.StatusMethodNotAllowed, ``, ``},
 	// test with disallowed HTTP method

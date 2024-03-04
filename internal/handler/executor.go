@@ -108,7 +108,7 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 		return err
 	}
 	// retrieve timeout value
-	timeout := e.hook.Timeout * time.Second
+	timeout := time.Duration(e.hook.Timeout)
 	// construct command
 	cmd := exec.Command(cmdPath)
 	cmd.Dir = e.hook.CommandWorkingDirectory
@@ -147,37 +147,48 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 		// sets the same PGID for the child processes
 		setPGID(cmd)
 		terminationTimer := e.stopProcessWithTimeout(cmd, timeout)
-		err := cmd.Run()
-		// stop timer if command had finished before the timeout reached
-		terminationTimer.Stop()
-		return err
+		defer func(t *time.Timer) {
+			// stop timer if command had finished before the timeout reached
+			t.Stop()
+			select {
+			case <-t.C:
+			default:
+			}
+		}(terminationTimer)
 	}
 	return cmd.Run()
 }
 
 // stopProcessWithTimeout handles termination of the process with configurable timeout
 func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) *time.Timer {
-	e.logger.Info("Setting up timeout for current operation", "timeout", timeout)
+	e.logger.Info("setting up timeout for current operation", "timeout", timeout)
 
 	return time.AfterFunc(timeout, func() {
 
-		e.logger.Info("Sending SIGTERM because timeout has reached", "timeout", timeout)
+		e.logger.Info("sending SIGTERM because timeout has reached", "timeout", timeout)
 		// attempting to terminate the process with pre-configured timeout
 		if err := sendKillSignal(e, cmd.Process.Pid, syscall.SIGTERM); err != nil {
-			e.logger.Warn("Failed to send SIGTERM, trying SIGKILL instead", "error", err)
+			e.logger.Warn("failed to send SIGTERM, trying SIGKILL instead", "error", err)
 		}
 		// attempting to kill the process with additional timeout on top
 		killingTimer := time.AfterFunc(time.Second*time.Duration(10), func() {
 			if err := sendKillSignal(e, cmd.Process.Pid, syscall.SIGKILL); err != nil {
-				e.logger.Error("Failed to send SIGKILL", "error", err)
+				e.logger.Error("failed to send SIGKILL", "error", err)
 			}
 		})
+		defer func(t *time.Timer) {
+			// stop the timer if process had terminated before timer reached
+			t.Stop()
+			select {
+			case <-t.C:
+			default:
+			}
+		}(killingTimer)
 		// waiting for the process being exited
 		if processState, err := cmd.Process.Wait(); err != nil && processState != nil {
-			e.logger.Error("Error during process exiting", "error", err)
+			e.logger.Error("error during process exiting", "error", err)
 		}
-		// stop the timer if process had terminated before timer reached
-		killingTimer.Stop()
+		e.logger.Info("command has been stopped", "command", cmd.Path)
 	})
 }
 

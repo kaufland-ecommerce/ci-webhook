@@ -1,6 +1,6 @@
 package middleware
 
-// Derived from the Goa project, MIT Licensed
+// Derived from from the Goa project, MIT Licensed
 // https://github.com/goadesign/goa/blob/v3/http/middleware/debug.go
 
 import (
@@ -15,8 +15,8 @@ import (
 	"strings"
 )
 
-// responseDumper tees the response to a buffer and a response writer.
-type responseDumper struct {
+// responseDupper tees the response to a buffer and a response writer.
+type responseDupper struct {
 	http.ResponseWriter
 	Buffer *bytes.Buffer
 	Status int
@@ -51,28 +51,28 @@ func Dumper(w io.Writer) func(http.Handler) http.Handler {
 
 			// Dump Response
 
-			dumper := &responseDumper{ResponseWriter: rw, Buffer: &bytes.Buffer{}}
-			h.ServeHTTP(dumper, r)
+			dupper := &responseDupper{ResponseWriter: rw, Buffer: &bytes.Buffer{}}
+			h.ServeHTTP(dupper, r)
 
 			// Response Status
-			buf.WriteString(fmt.Sprintf("< [%s] %d %s\n", rid, dumper.Status, http.StatusText(dumper.Status)))
+			buf.WriteString(fmt.Sprintf("< [%s] %d %s\n", rid, dupper.Status, http.StatusText(dupper.Status)))
 
 			// Response Headers
-			keys := make([]string, len(dumper.Header()))
+			keys := make([]string, len(dupper.Header()))
 			i := 0
-			for k := range dumper.Header() {
+			for k := range dupper.Header() {
 				keys[i] = k
 				i++
 			}
 			sort.Strings(keys)
 			for _, k := range keys {
-				buf.WriteString(fmt.Sprintf("< [%s] %s: %s\n", rid, k, strings.Join(dumper.Header()[k], ", ")))
+				buf.WriteString(fmt.Sprintf("< [%s] %s: %s\n", rid, k, strings.Join(dupper.Header()[k], ", ")))
 			}
 
 			// Response Body
-			if dumper.Buffer.Len() > 0 {
+			if dupper.Buffer.Len() > 0 {
 				buf.WriteString(fmt.Sprintf("< [%s]\n", rid))
-				sc = bufio.NewScanner(dumper.Buffer)
+				sc = bufio.NewScanner(dupper.Buffer)
 				sc.Split(bufio.ScanLines)
 				for sc.Scan() {
 					buf.WriteString(fmt.Sprintf("< [%s] ", rid))
@@ -85,19 +85,19 @@ func Dumper(w io.Writer) func(http.Handler) http.Handler {
 }
 
 // Write writes the data to the buffer and connection as part of an HTTP reply.
-func (r *responseDumper) Write(b []byte) (int, error) {
+func (r *responseDupper) Write(b []byte) (int, error) {
 	r.Buffer.Write(b)
 	return r.ResponseWriter.Write(b)
 }
 
 // WriteHeader records the status and sends an HTTP response header with status code.
-func (r *responseDumper) WriteHeader(s int) {
+func (r *responseDupper) WriteHeader(s int) {
 	r.Status = s
 	r.ResponseWriter.WriteHeader(s)
 }
 
 // Hijack supports the http.Hijacker interface.
-func (r *responseDumper) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+func (r *responseDupper) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hijacker, ok := r.ResponseWriter.(http.Hijacker); ok {
 		return hijacker.Hijack()
 	}
@@ -105,7 +105,7 @@ func (r *responseDumper) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 // Flush supports the http.Flusher interface.
-func (r *responseDumper) Flush() {
+func (r *responseDupper) Flush() {
 	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}

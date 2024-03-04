@@ -299,6 +299,22 @@ func (h *ResponseHeaders) Set(value string) error {
 	return nil
 }
 
+// Duration type supports unmarshalling to time.Duration
+type Duration time.Duration
+
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	var v string
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	tmp, err := time.ParseDuration(v)
+	if err != nil {
+		return err
+	}
+	*d = Duration(tmp)
+	return nil
+}
+
 // Hook type is a structure containing details for a single hook
 type Hook struct {
 	ID                                  string          `json:"id,omitempty"`
@@ -319,7 +335,7 @@ type Hook struct {
 	IncomingPayloadContentType          string          `json:"incoming-payload-content-type,omitempty"`
 	SuccessHttpResponseCode             int             `json:"success-http-response-code,omitempty"`
 	HTTPMethods                         []string        `json:"http-methods"`
-	Timeout                             time.Duration   `json:"timeout,omitempty"`
+	Timeout                             Duration        `json:"timeout,omitempty"`
 }
 
 // ParseJSONParameters decodes specified arguments to JSON objects and replaces the

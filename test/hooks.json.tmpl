@@ -554,5 +554,30 @@
         }
       ]
     }
+  },
+  {
+    "id": "hook-with-timeout",
+    "execute-command": "./test/test.sh",
+    "command-working-directory": ".",
+    "success-http-response-code": 200,
+    "incoming-payload-content-type": "application/json",
+    "http-methods": [
+      "Post "
+    ],
+    "include-command-output-in-response": true,
+    "include-command-output-in-response-on-error": true,
+    "pass-environment-to-command": [
+      {
+        "source": "payload",
+        "name": "exit.code",
+        "envname": "TEST_EXIT_CODE"
+      },
+      {
+        "source": "payload",
+        "name": "sleep.time",
+        "envname": "TEST_SLEEP"
+      }
+    ],
+    "timeout": "3s"
   }
 ]
