@@ -10,16 +10,11 @@ import (
 
 // sendKillSignal sends terminate/kill signal to the process
 func sendKillSignal(executor *Executor, pid int, signal syscall.Signal) error {
-	var err error
 
-	if signal == syscall.SIGTERM {
-		err = exec.Command("TASKKILL", "/PID", strconv.Itoa(pid)).Run()
-	} else {
-		err = exec.Command("TASKKILL", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
-	}
+	err := exec.Command("TASKKILL", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
 
 	if err != nil {
-		executor.logger.Error("error during handling terminate/kill signal", "signal", signal.String(), "error", err)
+		executor.logger.Error("error during handling terminate/kill signal", "error", err)
 	}
 
 	return err
