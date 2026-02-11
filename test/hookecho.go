@@ -33,7 +33,7 @@ func main() {
 			if strings.HasPrefix(arg, "sleep=") {
 				timeout, err := time.ParseDuration(arg[6:])
 				if err != nil {
-					fmt.Printf(err.Error())
+					fmt.Printf("could not parse duration: %s", err)
 					os.Exit(-1)
 				}
 				time.Sleep(timeout)
