@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	Version = "2.8.1"
+	Version = "3.0.0"
 )
 
 var (
@@ -52,6 +52,7 @@ var (
 	setUID             = flag.Int("setuid", 0, "set user ID after opening listening port; must be used with setgid")
 	httpMethods        = flag.String("http-methods", "", `set default allowed HTTP methods (ie. "POST"); separate methods with comma`)
 	pidPath            = flag.String("pidfile", "", "create PID file at the given path")
+	withTracing        = flag.Bool("trace", false, "enable OTEL tracing for webhook operations")
 
 	responseHeaders hook.ResponseHeaders
 	hooksFiles      hook_manager.HooksFiles
@@ -174,13 +175,24 @@ func main() {
 	}
 
 	// setup Request Handler
-	reqHandler := handler.NewRequestHandler(
+	var reqHandler http.Handler = handler.NewRequestHandler(
 		hooks,
 		logger,
 		responseHeaders,
 		parseMethodList(*httpMethods),
 		*maxMultipartMem,
 	)
+
+	// setup tracing
+	if *withTracing {
+		stopTracer, err := setup.InitTracer(ctx, "webhook", Version)
+		if err != nil {
+			logger.Error("error setting up tracing", "error", err)
+			os.Exit(1)
+		}
+		defer func() { _ = stopTracer(context.Background()) }()
+		reqHandler = setup.WrapChiHandler(reqHandler)
+	}
 
 	// setup HTTP Router & Server
 	r := chi.NewRouter()
