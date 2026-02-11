@@ -83,11 +83,17 @@ type FlushableWriter interface {
 }
 
 type flushWriter struct {
-	w FlushableWriter
+	w          FlushableWriter
+	muteErrors bool
+	hasError   bool
 }
 
 func (fw *flushWriter) Write(p []byte) (n int, err error) {
 	n, err = fw.w.Write(p)
+	if err != nil && fw.muteErrors {
+		fw.hasError = true
+		return len(p), nil
+	}
 	if n > 0 {
 		fw.w.Flush()
 	}

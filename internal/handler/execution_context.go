@@ -89,7 +89,7 @@ func (rec *requestExecutionContext) Handle(w http.ResponseWriter, request *http.
 			// and we can't bind the status code to command exit code
 			w.WriteHeader(http.StatusOK)
 			// create an io.Writer that flushes after every write operation
-			fw := &flushWriter{w: flusher}
+			fw := &flushWriter{w: flusher, muteErrors: true}
 			// run command
 			waiter := make(chan error)
 			var exitCode int
