@@ -2,16 +2,21 @@ package setup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/semconv/v1.20.0/httpconv"
@@ -25,21 +30,42 @@ func InitTracer(
 	serviceName, serviceVersion string,
 	debug bool,
 ) (func(context.Context) error, error) {
+	var (
+		shutdownFnList []func(context.Context) error
+	)
+	shutdown := func(ctx context.Context) error {
+		// shutdown calls cleanup functions registered via shutdownFnList.
+		// The errors from the calls are joined.
+		// Each registered cleanup will be invoked once.
+		var err error
+		for _, fn := range shutdownFnList {
+			err = errors.Join(err, fn(ctx))
+		}
+		shutdownFnList = nil
+		return err
+	}
+	handleErr := func(inErr error) error {
+		return errors.Join(inErr, shutdown(ctx))
+	}
+
 	// Create OTLP trace exporter
 	otlpExporter, err := otlptracegrpc.New(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
+		return nil, handleErr(fmt.Errorf("failed to create OTLP trace exporter: %w", err))
 	}
-	opts := []sdktrace.TracerProviderOption{
+	shutdownFnList = append(shutdownFnList, otlpExporter.Shutdown)
+
+	tpOpts := []sdktrace.TracerProviderOption{
 		sdktrace.WithBatcher(otlpExporter),
 	}
 	// Create debug STDERR tracer
 	if debug {
 		stdoutExporter, err := stdouttrace.New(stdouttrace.WithWriter(os.Stderr))
 		if err != nil {
-			return nil, fmt.Errorf("failed to create STDOUT trace exporter: %w", err)
+			return nil, handleErr(fmt.Errorf("failed to create STDOUT trace exporter: %w", err))
 		}
-		opts = append(opts, sdktrace.WithBatcher(stdoutExporter))
+		shutdownFnList = append(shutdownFnList, stdoutExporter.Shutdown)
+		tpOpts = append(tpOpts, sdktrace.WithBatcher(stdoutExporter))
 	}
 	// regular propagator to link to incoming traces
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
@@ -59,13 +85,50 @@ func InitTracer(
 		resource.WithHost(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create resource: %w", err)
+		return nil, handleErr(fmt.Errorf("failed to create resource: %w", err))
 	}
-	opts = append(opts, sdktrace.WithResource(res))
+	tpOpts = append(tpOpts, sdktrace.WithResource(res))
 
-	tp := sdktrace.NewTracerProvider(opts...)
-	otel.SetTracerProvider(tp)
-	return tp.Shutdown, nil
+	tracerProvider := sdktrace.NewTracerProvider(tpOpts...)
+	shutdownFnList = append(shutdownFnList, tracerProvider.Shutdown)
+	otel.SetTracerProvider(tracerProvider)
+
+	metricExporter, err := otlpmetricgrpc.New(ctx)
+	if err != nil {
+		return nil, handleErr(fmt.Errorf("failed to create OTLP metric exporter: %w", err))
+	}
+	shutdownFnList = append(shutdownFnList, metricExporter.Shutdown)
+
+	metricReader := sdkmetric.NewPeriodicReader(
+		metricExporter,
+		sdkmetric.WithInterval(30*time.Second),
+	)
+	shutdownFnList = append(shutdownFnList, metricReader.Shutdown)
+	mpOpts := []sdkmetric.Option{
+		sdkmetric.WithResource(res),
+		sdkmetric.WithReader(metricReader),
+	}
+	if debug {
+		stdoutMetricExporter, err := stdoutmetric.New(stdoutmetric.WithWriter(os.Stderr))
+		if err != nil {
+			return nil, handleErr(fmt.Errorf("failed to create STDOUT metric exporter: %w", err))
+		}
+		shutdownFnList = append(shutdownFnList, stdoutMetricExporter.Shutdown)
+
+		stdoutMetricReader := sdkmetric.NewPeriodicReader(
+			stdoutMetricExporter,
+			sdkmetric.WithInterval(30*time.Second),
+		)
+		shutdownFnList = append(shutdownFnList, stdoutMetricReader.Shutdown)
+
+		mpOpts = append(mpOpts, sdkmetric.WithReader(stdoutMetricReader))
+	}
+
+	meterProvider := sdkmetric.NewMeterProvider(mpOpts...)
+	shutdownFnList = append(shutdownFnList, meterProvider.Shutdown)
+	otel.SetMeterProvider(meterProvider)
+
+	return shutdown, nil
 }
 
 func WrapChiHandler(h http.Handler) http.Handler {
