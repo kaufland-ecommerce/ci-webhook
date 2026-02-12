@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,9 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-multierror"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/kaufland-ecommerce/ci-webhook/internal/hook"
 )
@@ -180,11 +184,20 @@ func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) 
 	})
 }
 
-func (e *Executor) Execute(w io.Writer) error {
+func (e *Executor) Execute(ctx context.Context, w io.Writer) error {
+	tracer := otel.GetTracerProvider().Tracer("hook.executor")
+	ctx, span := tracer.Start(ctx, "RUN "+e.hook.ID, trace.WithAttributes(
+		traceHookIDKey.String(e.hook.ID),
+		traceReqIDKey.String(e.req.ID),
+		traceOperation.String("hook.execute"),
+	))
+	defer span.End()
 	commandOutputBuf := &bytes.Buffer{}
 	mw := io.MultiWriter(w, commandOutputBuf)
 	err := e.execHookCommand(mw)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "exec failed")
 		e.logger.Error("error executing hook's command", "error", err)
 	}
 	e.logger.Info("finished handling", "exec.output", commandOutputBuf.String())

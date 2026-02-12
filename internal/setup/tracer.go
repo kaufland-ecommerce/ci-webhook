@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -18,12 +20,28 @@ import (
 )
 
 // InitTracer initializes OpenTelemetry tracer with OTLP exporter
-func InitTracer(ctx context.Context, serviceName, serviceVersion string) (func(context.Context) error, error) {
+func InitTracer(
+	ctx context.Context,
+	serviceName, serviceVersion string,
+	debug bool,
+) (func(context.Context) error, error) {
 	// Create OTLP trace exporter
-	exporter, err := otlptracegrpc.New(ctx)
+	otlpExporter, err := otlptracegrpc.New(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
 	}
+	opts := []sdktrace.TracerProviderOption{
+		sdktrace.WithBatcher(otlpExporter),
+	}
+	// Create debug STDERR tracer
+	if debug {
+		stdoutExporter, err := stdouttrace.New(stdouttrace.WithWriter(os.Stderr))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create STDOUT trace exporter: %w", err)
+		}
+		opts = append(opts, sdktrace.WithBatcher(stdoutExporter))
+	}
+	// regular propagator to link to incoming traces
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
@@ -43,14 +61,10 @@ func InitTracer(ctx context.Context, serviceName, serviceVersion string) (func(c
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
-	// Create trace provider
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-	)
-	// Set global trace provider
+	opts = append(opts, sdktrace.WithResource(res))
+
+	tp := sdktrace.NewTracerProvider(opts...)
 	otel.SetTracerProvider(tp)
-	// Return cleanup function
 	return tp.Shutdown, nil
 }
 
@@ -61,7 +75,15 @@ func WrapChiHandler(h http.Handler) http.Handler {
 		carrier := propagation.HeaderCarrier(r.Header)
 
 		traceCtx, span := tracer.Start(r.Context(), name,
+			trace.WithSpanKind(trace.SpanKindServer),
 			trace.WithAttributes(httpconv.ServerRequest("", r)...),
+			trace.WithAttributes(
+				semconv.URLDomain(r.Host),
+				semconv.URLFull(r.RequestURI),
+				semconv.URLPath(r.URL.Path),
+				semconv.URLQuery(r.URL.RawQuery),
+				semconv.HTTPRequestHeader("x-request-id", middleware.GetReqID(r.Context())),
+			),
 		)
 		defer span.End()
 		otel.GetTextMapPropagator().Extract(traceCtx, carrier)

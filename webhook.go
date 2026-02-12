@@ -185,7 +185,7 @@ func main() {
 
 	// setup tracing
 	if *withTracing {
-		stopTracer, err := setup.InitTracer(ctx, "webhook", Version)
+		stopTracer, err := setup.InitTracer(ctx, "webhook", Version, *debug)
 		if err != nil {
 			logger.Error("error setting up tracing", "error", err)
 			os.Exit(1)

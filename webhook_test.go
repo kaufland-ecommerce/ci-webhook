@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -58,7 +59,7 @@ func TestStaticParams(t *testing.T) {
 	}
 	if err := handler.NewExecutor(spHook, r,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-	).Execute(b); err != nil {
+	).Execute(context.Background(), b); err != nil {
 		t.Fatalf("Unexpected error: %v\n", err)
 	}
 	matched, _ := regexp.MatchString("passed", b.String())
