@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -22,6 +22,8 @@ import (
 	"go.opentelemetry.io/otel/semconv/v1.20.0/httpconv"
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/kaufland-ecommerce/ci-webhook/internal/middleware"
 )
 
 // InitTracer initializes OpenTelemetry tracer with OTLP exporter
@@ -151,7 +153,7 @@ func WrapChiHandler(h http.Handler) http.Handler {
 		defer span.End()
 		otel.GetTextMapPropagator().Extract(traceCtx, carrier)
 
-		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		h.ServeHTTP(ww, r.WithContext(traceCtx))
 
 		chiCtx := chi.RouteContext(r.Context())
