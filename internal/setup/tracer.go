@@ -136,10 +136,11 @@ func InitTracer(
 func WrapChiHandler(h http.Handler) http.Handler {
 	tracer := otel.GetTracerProvider().Tracer("webhook")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := "HTTP " + r.Method
 		carrier := propagation.HeaderCarrier(r.Header)
+		traceCtx := otel.GetTextMapPropagator().Extract(r.Context(), carrier)
 
-		traceCtx, span := tracer.Start(r.Context(), name,
+		name := "HTTP " + r.Method
+		traceCtx, span := tracer.Start(traceCtx, name,
 			trace.WithSpanKind(trace.SpanKindServer),
 			trace.WithAttributes(httpconv.ServerRequest("", r)...),
 			trace.WithAttributes(
@@ -151,7 +152,6 @@ func WrapChiHandler(h http.Handler) http.Handler {
 			),
 		)
 		defer span.End()
-		otel.GetTextMapPropagator().Extract(traceCtx, carrier)
 
 		ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		h.ServeHTTP(ww, r.WithContext(traceCtx))
