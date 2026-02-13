@@ -7,6 +7,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/kaufland-ecommerce/ci-webhook/internal/hook"
 	"github.com/kaufland-ecommerce/ci-webhook/internal/hook_manager"
@@ -43,7 +45,14 @@ func NewRequestHandler(
 	}
 }
 
+const (
+	traceHookIDKey = attribute.Key("webhook.hook_id")
+	traceReqIDKey  = attribute.Key("webhook.request_id")
+	traceOperation = attribute.Key("operation.name")
+)
+
 func (r *RequestHandler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
+
 	hookRequest := &hook.Request{
 		ID:         middleware.GetReqID(request.Context()),
 		RawRequest: request,
@@ -63,13 +72,19 @@ func (r *RequestHandler) ServeHTTP(w http.ResponseWriter, request *http.Request)
 		_, _ = fmt.Fprint(w, "Hook not found.")
 		return
 	}
-	requestLog.Info("hook matched", "hook_id", matchedHook.ID)
-
+	requestLog = requestLog.With("hook_id", matchedHook.ID)
+	requestLog.Info("hook matched")
+	// enrich span
+	span := trace.SpanFromContext(request.Context())
+	span.SetAttributes(
+		traceHookIDKey.String(matchedHook.ID),
+		traceReqIDKey.String(hookRequest.ID),
+	)
 	// create execution context
 	executionContext := requestExecutionContext{
 		hookRequest:  hookRequest,
 		hook:         matchedHook,
-		logger:       requestLog.With("hook_id", matchedHook.ID),
+		logger:       requestLog,
 		httpRequest:  request,
 		httpResponse: w,
 		opts:         r.opts,
@@ -83,11 +98,17 @@ type FlushableWriter interface {
 }
 
 type flushWriter struct {
-	w FlushableWriter
+	w          FlushableWriter
+	muteErrors bool
+	hasError   bool
 }
 
 func (fw *flushWriter) Write(p []byte) (n int, err error) {
 	n, err = fw.w.Write(p)
+	if err != nil && fw.muteErrors {
+		fw.hasError = true
+		return len(p), nil
+	}
 	if n > 0 {
 		fw.w.Flush()
 	}

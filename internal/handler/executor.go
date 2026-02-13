@@ -2,6 +2,8 @@ package handler
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +15,10 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-multierror"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/kaufland-ecommerce/ci-webhook/internal/hook"
 )
@@ -147,13 +153,13 @@ func (e *Executor) execHookCommand(w io.Writer) error {
 		// sets the same PGID for the child processes
 		setPGID(cmd)
 		terminationTimer := e.stopProcessWithTimeout(cmd, timeout)
-        // stop the timer if process had terminated before timer reached
+		// stop the timer if a process had terminated before the timeout reached
 		defer terminationTimer.Stop()
 	}
 	return cmd.Run()
 }
 
-// stopProcessWithTimeout handles termination of the process with configurable timeout
+// stopProcessWithTimeout handles termination of the process with a configurable timeout
 func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) *time.Timer {
 	e.logger.Info("setting up timeout for current operation", "timeout", timeout)
 
@@ -170,7 +176,7 @@ func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) 
 				e.logger.Error("failed to send SIGKILL", "error", err)
 			}
 		})
-        // stop the timer if process had terminated before timer reached
+		// stop the timer if process had terminated before timer reached
 		defer killingTimer.Stop()
 		// waiting for the process being exited
 		if processState, err := cmd.Process.Wait(); err != nil && processState != nil {
@@ -180,13 +186,76 @@ func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) 
 	})
 }
 
-func (e *Executor) Execute(w io.Writer) error {
+func (e *Executor) Execute(ctx context.Context, w io.Writer) error {
+	// run exec with tracing
+	if err := e.trace(ctx, func() error { return e.execute(w) }); err != nil {
+		if !errors.Is(err, instrumentationErr) {
+			return err
+		}
+		e.logger.Warn("tracing failed, fallback to non-instrumented execution", "error", err)
+	}
+	// run exec without tracing
+	return e.execute(w)
+}
+
+var instrumentationErr = errors.New("instrumentation error")
+
+func (e *Executor) trace(ctx context.Context, fn func() error) error {
+	// setup tracing span
+	const (
+		mainOpName     = "hook.executor"
+		metricInflight = mainOpName + ".run.inflight"
+		metricTotal    = mainOpName + ".run.hits"
+		metricError    = mainOpName + ".run.errors"
+	)
+	tracer := otel.Tracer(mainOpName)
+	attrHookID := traceHookIDKey.String(e.hook.ID)
+	metricAttrs := metric.WithAttributes(attrHookID)
+	// setup metrics
+	meter := otel.Meter(mainOpName)
+	cInflight, err := meter.Int64UpDownCounter(metricInflight)
+	if err != nil {
+		return errors.Join(instrumentationErr, fmt.Errorf("meter failed [%s]: %w", metricInflight, err))
+	}
+	cTotal, err := meter.Int64Counter(metricTotal)
+	if err != nil {
+		return errors.Join(instrumentationErr, fmt.Errorf("meter failed [%s]: %w", metricTotal, err))
+	}
+	cError, err := meter.Int64Counter(metricError)
+	if err != nil {
+		return errors.Join(instrumentationErr, fmt.Errorf("meter failed [%s]: %w", metricError, err))
+	}
+	// start tracing and metering
+	ctx, span := tracer.Start(ctx, "RUN "+e.hook.ID, trace.WithAttributes(
+		attrHookID,
+		traceReqIDKey.String(e.req.ID),
+		traceOperation.String("hook.execute"),
+	))
+	defer span.End()
+
+	cInflight.Add(ctx, 1, metricAttrs)
+	defer cInflight.Add(ctx, -1, metricAttrs)
+
+	cTotal.Add(ctx, 1, metricAttrs)
+	if err := fn(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "exec failed")
+		cError.Add(ctx, 1, metricAttrs)
+		return err
+	}
+	return nil
+}
+
+func (e *Executor) execute(w io.Writer) error {
 	commandOutputBuf := &bytes.Buffer{}
 	mw := io.MultiWriter(w, commandOutputBuf)
-	err := e.execHookCommand(mw)
-	if err != nil {
+	defer func() {
+		// log after execution finished, capturing out even on error
+		e.logger.Info("execution finished", "exec.output", commandOutputBuf.String())
+	}()
+	if err := e.execHookCommand(mw); err != nil {
 		e.logger.Error("error executing hook's command", "error", err)
+		return err
 	}
-	e.logger.Info("finished handling", "exec.output", commandOutputBuf.String())
-	return err
+	return nil
 }

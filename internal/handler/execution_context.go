@@ -41,6 +41,7 @@ func (rec *requestExecutionContext) evaluateHookRules() (bool, error) {
 }
 
 func (rec *requestExecutionContext) Handle(w http.ResponseWriter, request *http.Request) {
+	ctx := request.Context()
 	// Check for allowed methods
 	if !rec.IsHTTPMethodAllowed(request.Method) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -89,13 +90,13 @@ func (rec *requestExecutionContext) Handle(w http.ResponseWriter, request *http.
 			// and we can't bind the status code to command exit code
 			w.WriteHeader(http.StatusOK)
 			// create an io.Writer that flushes after every write operation
-			fw := &flushWriter{w: flusher}
+			fw := &flushWriter{w: flusher, muteErrors: true}
 			// run command
 			waiter := make(chan error)
 			var exitCode int
 			go func() {
 				defer close(waiter)
-				waiter <- executor.Execute(fw)
+				waiter <- executor.Execute(ctx, fw)
 			}()
 			if err := <-waiter; err != nil {
 				exitCode = 1
@@ -111,7 +112,7 @@ func (rec *requestExecutionContext) Handle(w http.ResponseWriter, request *http.
 	case rec.hook.CaptureCommandOutput:
 		// create a buffer with io.Writer interface
 		buf := &bytes.Buffer{}
-		err = executor.Execute(buf)
+		err = executor.Execute(ctx, buf)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			if !rec.hook.CaptureCommandOutputOnError {
@@ -127,7 +128,7 @@ func (rec *requestExecutionContext) Handle(w http.ResponseWriter, request *http.
 	default:
 		go func() {
 			buf := &bytes.Buffer{}
-			err = executor.Execute(buf)
+			err = executor.Execute(ctx, buf)
 		}()
 		rec.writeResponse(rec.hook.SuccessHttpResponseCode, rec.hook.ResponseMessage)
 	}
