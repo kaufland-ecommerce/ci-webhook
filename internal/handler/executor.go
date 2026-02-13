@@ -188,14 +188,13 @@ func (e *Executor) stopProcessWithTimeout(cmd *exec.Cmd, timeout time.Duration) 
 
 func (e *Executor) Execute(ctx context.Context, w io.Writer) error {
 	// run exec with tracing
-	if err := e.trace(ctx, func() error { return e.execute(w) }); err != nil {
-		if !errors.Is(err, instrumentationErr) {
-			return err
-		}
+	err := e.trace(ctx, func() error { return e.execute(w) })
+	if errors.Is(err, instrumentationErr) {
+		// run exec without tracing
 		e.logger.Warn("tracing failed, fallback to non-instrumented execution", "error", err)
+		return e.execute(w)
 	}
-	// run exec without tracing
-	return e.execute(w)
+	return err
 }
 
 var instrumentationErr = errors.New("instrumentation error")
